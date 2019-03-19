@@ -21,3 +21,7 @@ class Conv2DWinogradWeightTransformAttrs(Attrs):
 @register_relay_attr_node
 class GlobalPool2DAttrs(Attrs):
     """Attribute of nn.global_pool"""
+
+@register_relay_attr_node
+class DenseAttrs(Attrs):
+    """Attribute of nn.dense"""
