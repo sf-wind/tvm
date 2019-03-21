@@ -157,12 +157,12 @@ input_vars = [x, h1, h2, m_t, a1_t, a2_t, a3_t, a4_t]
 inputs = collections.OrderedDict(
     [(
         param.name_hint,
-        tvm.ndarray.array(torch.zeros(param.type_annotation.concrete_shape))
+        tvm.ndarray.array(torch.ones(param.type_annotation.concrete_shape))
     ) for param in input_vars])
 
 
 logging.basicConfig(level=logging.DEBUG)
-skl_target = tvm.target.create('llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu')
+skl_target = tvm.target.create('llvm -mcpu=core-avx2 -target=x86_64-linux-gnu')
 
 
 def tune():
@@ -206,7 +206,8 @@ if 0:
     sys.exit()
 
 
-with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
+# with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
+if 1:
     with relay.build_config(opt_level=3):
         func = relay.optimize(func, target=skl_target, params=params)
         print(func.astext(show_meta_data=False))
@@ -222,7 +223,7 @@ with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
         #     f.write(graph.encode())
         # netron.start(f.name, host="localhost")
 
-
+'''
 tmp = tvm.contrib.util.tempdir()
 lib_fname = tmp.relpath('net.tar')
 with skl_target:
@@ -233,17 +234,19 @@ remote = tracker.request('skl')
 remote.upload(lib_fname)
 rlib = remote.load_module('net.tar')
 ctx = remote.cpu(0)
+'''
+ctx = tvm.context("llvm -mcpu=core-avx2", 0)
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
 r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
-module = graph_runtime.create(graph, rlib, ctx)
+module = graph_runtime.create(graph, lib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
 ftimer = module.module.time_evaluator("run", ctx, 10000)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
-
-module = debug_runtime.create(graph, rlib, ctx)
+'''
+module = debug_runtime.create(graph, lib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
 module.run()
@@ -252,3 +255,4 @@ module.run()
 module.run()
 module.run()
 module.run()
+'''

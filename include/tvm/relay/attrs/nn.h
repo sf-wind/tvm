@@ -321,6 +321,16 @@ struct SparseDenseAttrs : public tvm::AttrsNode<SparseDenseAttrs> {
   TVM_DECLARE_ATTRS(SparseDenseAttrs, "relay.attrs.SparseDenseAttrs") {}
 };
 
+/*! \brief Attributes for dense operator */
+struct SparseDense2Attrs : public tvm::AttrsNode<SparseDense2Attrs> {
+  TVM_DECLARE_ATTRS(SparseDense2Attrs, "relay.attrs.SparseDense2Attrs") {}
+};
+
+/*! \brief Attributes for dense operator */
+struct SparseDenseStructureAttrs : public tvm::AttrsNode<SparseDenseStructureAttrs> {
+  TVM_DECLARE_ATTRS(SparseDenseStructureAttrs, "relay.attrs.SparseDenseStructureAttrs") {}
+};
+
 /*! \brief Attributes for upsampling operator */
 struct UpSamplingAttrs : public tvm::AttrsNode<UpSamplingAttrs> {
   int scale;

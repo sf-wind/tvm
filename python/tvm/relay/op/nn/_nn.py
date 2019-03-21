@@ -86,6 +86,36 @@ def schedule_sparse_dense(attrs, outputs, target):
 
 reg.register_pattern("nn.sparse_dense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
+# sparse_dense2
+@reg.register_compute("nn.sparse_dense2")
+def compute_sparse_dense2(attrs, inputs, out_type, target):
+    # import pdb; pdb.set_trace()
+    """Compute definition of sparse_dense2"""
+    return [topi.nn.sparse_dense2(inputs[0], inputs[1], inputs[2], inputs[3])]
+
+@reg.register_schedule("nn.sparse_dense2")
+def schedule_sparse_dense2(attrs, outputs, target):
+    """Schedule definition of batch_matmul"""
+    with target:
+        return topi.generic.schedule_sparse_dense2(outputs)
+
+reg.register_pattern("nn.sparse_dense2", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+# sparse_dense_structure
+@reg.register_compute("nn.sparse_dense_structure")
+def compute_sparse_dense_structure(attrs, inputs, out_type, target):
+    # import pdb; pdb.set_trace()
+    """Compute definition of sparse_dense_structure"""
+    return [topi.nn.sparse_dense_structure(inputs[0], inputs[1], inputs[2], inputs[3])]
+
+@reg.register_schedule("nn.sparse_dense_structure")
+def schedule_sparse_dense_structure(attrs, outputs, target):
+    """Schedule definition of batch_matmul"""
+    with target:
+        return topi.generic.schedule_sparse_dense_structure(outputs)
+
+reg.register_pattern("nn.sparse_dense_structure", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
 
 # conv2d
 @reg.register_compute("nn.conv2d")
