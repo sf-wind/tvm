@@ -3,6 +3,8 @@ import topi
 from tvm import relay
 from tvm import autotvm
 import numpy as np
+import itertools
+import scipy.sparse as sp
 
 import tvm.contrib.debugger.debug_runtime as debug_runtime
 import tvm.contrib.graph_runtime as graph_runtime
@@ -34,19 +36,20 @@ a4_t = relay.var("a4_t", shape=[1, aux_dims], dtype=dtype)
 concat0_o = relay.concatenate([x, m_t, a1_t], axis=1)
 
 import collections
-CSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'density'])
+BSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'BS_R', 'BS_C', 'density'])
 
 def sparse_dense(X, W, B, **kwargs):
     return relay.nn.bias_add(relay.nn.sparse_dense(X, W), B)
 
-def to_sparse(v, density=0.03):
+def to_sparse(v, density=0.04, BS_R=16, BS_C=1):
     name = v.name_hint
     (N, K) = v.type_annotation.concrete_shape
     nnz = int(density * N * K)
-    v_data = relay.var(name + "_data", shape=(nnz,), dtype=dtype)
-    v_indices = relay.var(name + "_indices", shape=(nnz,), dtype="int32")
-    v_indptr = relay.var(name + "_indptr", shape=(N + 1,), dtype="int32")
-    return CSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, density=density)
+    num_blocks = int(nnz / (BS_R * BS_C)) + 1
+    v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=dtype)
+    v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype="int32")
+    v_indptr = relay.var(name + "_indptr", shape=(N // BS_R + 1,), dtype="int32")
+    return BSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, BS_R=BS_R, BS_C=BS_C, density=density)
 
 fc_0_W = to_sparse(relay.var("fc_0_W", shape=(rnn_dims, feat_dims + aux_dims + 1), dtype=dtype))
 fc_0_B = relay.var("fc_0_B", shape=(rnn_dims,), dtype=dtype)
@@ -132,10 +135,31 @@ param_vars = [
     fc_0_W, fc_0_B, gru_0_W_X, gru_0_W_H, gru_0_B, gru_1_W_X, gru_1_W_H, gru_1_B, fc_1_W, fc_1_B, fc_2_W, fc_2_B, fc_3_W, fc_3_B
 ]
 
+
+
+def random_bsr_matrix(M, N, BS_R, BS_C, density, dtype):
+    Y = np.zeros((M, N), dtype=dtype)
+    assert M % BS_R == 0
+    assert N % BS_C == 0
+    nnz = int(density * M * N)
+    num_blocks = int(nnz / (BS_R * BS_C)) + 1
+    candidate_blocks = np.asarray(list(itertools.product(range(0, M, BS_R), range(0, N, BS_C))))
+    assert candidate_blocks.shape[0] == M // BS_R * N // BS_C
+    chosen_blocks = candidate_blocks[np.random.choice(candidate_blocks.shape[0], size=num_blocks, replace=False)]
+    for i in range(len(chosen_blocks)):
+        r, c = chosen_blocks[i]
+        Y[r:r + BS_R, c:c + BS_C] = np.random.randn(BS_R, BS_C)
+    s = sp.bsr_matrix(Y, blocksize=(BS_R, BS_C))
+    assert s.data.shape == (num_blocks, BS_R, BS_C)
+    assert s.indices.shape == (num_blocks, )
+    assert s.indptr.shape == (M // BS_R + 1, )
+    return s
+
 def instantiate(param):
-    if isinstance(param, CSR):
+    if isinstance(param, BSR):
         import scipy.sparse as sp
-        param_np = sp.random(m=param.N, n=param.K, density=param.density, format='csr', dtype='float32')
+        param_np = random_bsr_matrix(M=param.N, N=param.K, BS_R=param.BS_R, BS_C=param.BS_C, density=param.density, dtype='float32')
+        print(param_np.data.shape)
         return [
             (param.data.name_hint, tvm.ndarray.array(param_np.data)),
             (param.indices.name_hint, tvm.ndarray.array(param_np.indices.astype("int32"))),
@@ -151,17 +175,17 @@ def instantiate(param):
             )
         ]
 params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
-
+print("Total param size: ", sum(v.asnumpy().nbytes for v in params.values()))
 input_vars = [x, h1, h2, m_t, a1_t, a2_t, a3_t, a4_t]
 inputs = collections.OrderedDict(
     [(
         param.name_hint,
-        tvm.ndarray.array(torch.ones(param.type_annotation.concrete_shape))
+        tvm.ndarray.array(torch.zeros(param.type_annotation.concrete_shape))
     ) for param in input_vars])
 
 
 logging.basicConfig(level=logging.DEBUG)
-skl_target = tvm.target.create('llvm -mcpu=core-avx2 -target=x86_64-linux-gnu')
+skl_target = tvm.target.create('llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu')
 
 
 def tune():
@@ -206,8 +230,7 @@ if 0:
     sys.exit()
 
 
-# with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
-if 1:
+with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
     with relay.build_config(opt_level=3):
         func = relay.optimize(func, target=skl_target, params=params)
         print(func.astext(show_meta_data=False))
@@ -223,7 +246,7 @@ if 1:
         #     f.write(graph.encode())
         # netron.start(f.name, host="localhost")
 
-'''
+
 tmp = tvm.contrib.util.tempdir()
 lib_fname = tmp.relpath('net.tar')
 with skl_target:
@@ -234,19 +257,17 @@ remote = tracker.request('skl')
 remote.upload(lib_fname)
 rlib = remote.load_module('net.tar')
 ctx = remote.cpu(0)
-'''
-ctx = tvm.context("llvm -mcpu=core-avx2", 0)
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
 r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
-module = graph_runtime.create(graph, lib, ctx)
+module = graph_runtime.create(graph, rlib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
 ftimer = module.module.time_evaluator("run", ctx, 10000)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
-'''
-module = debug_runtime.create(graph, lib, ctx)
+
+module = debug_runtime.create(graph, rlib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
 module.run()
@@ -255,4 +276,3 @@ module.run()
 module.run()
 module.run()
 module.run()
-'''
