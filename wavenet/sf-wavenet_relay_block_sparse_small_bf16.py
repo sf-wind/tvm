@@ -206,7 +206,8 @@ if 0:
     sys.exit()
 
 
-with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
+# with autotvm.apply_history_best("synthesis_autotvm_skl.best.log"):
+if 1:
     with relay.build_config(opt_level=3):
         func = relay.optimize(func, target=skl_target, params=params)
         print(func.astext(show_meta_data=False))
