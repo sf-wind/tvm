@@ -101,7 +101,7 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
     (_, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
     (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
     NB = NB_plus_1 - 1    # assert topi.util.get_const_tuple(data.shape)[0] == 1
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     # oshape = (topi.util.get_const_tuple(data.shape)[0], topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
     oshape = (NB * BS_R, M)
 
@@ -117,8 +117,8 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
-        a_val = weight_data[elem, i % BS_R, bs_c].astype("float32")
-        weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
+        # a_val = weight_data[elem, i % BS_R, bs_c].astype("float32")
+        # weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
         a_val = weight_data[elem, 0, 0].astype("float32")
         weight_val = data[weight_indices[elem], i]
 
