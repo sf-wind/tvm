@@ -53,9 +53,10 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
     # import pdb; pdb.set_trace()
     # oshape = (topi.util.get_const_tuple(data.shape)[0], topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
     oshape = (topi.util.get_const_tuple(weight_indptr.shape)[0] - 1,
-              topi.util.get_const_tuple(data.shape)[1])
+              topi.util.get_const_tuple(data.shape)[2])
     assert weight_indices.dtype == "int32", weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    sidx = tvm.reduce_axis((0, weight_data.shape[1]), name="sidx")
     def f(row, i):
         assert row.dtype == "int32"
         row_start = weight_indptr[row]
@@ -63,7 +64,33 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
-        a_val = weight_data[elem].astype("float32")
-        weight_val = data[weight_indices[elem], i]
-        return tvm.sum(a_val * weight_val, axis=elem_idx)
-    return tvm.compute(oshape, f, name="sparse_dense_structure", tag="sparse_dense_structure")
+        a_val = weight_data[elem, sidx].astype("float32")
+        weight_val = data[weight_indices[elem], sidx, i]
+        return tvm.sum(a_val * weight_val, axis=[elem_idx, sidx])
+    return tvm.compute(oshape, f, name="sparse_dense_structure",
+                       tag="sparse_dense_structure")
+
+
+@tvm.target.generic_func
+def sparse_dense_structure2(data, weight_data, weight_indices, weight_indptr):
+    import topi
+    # assert topi.util.get_const_tuple(data.shape)[0] == 1
+    # import pdb; pdb.set_trace()
+    # oshape = (topi.util.get_const_tuple(data.shape)[0], topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
+    oshape = (topi.util.get_const_tuple(weight_indptr.shape)[0] - 1,
+              topi.util.get_const_tuple(data.shape)[2])
+    assert weight_indices.dtype == "int32", weight_indices.dtype
+    assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    sidx = tvm.reduce_axis((0, weight_data.shape[1]), name="sidx")
+    def f(row, i):
+        assert row.dtype == "int32"
+        row_start = weight_indptr[row]
+        row_end = weight_indptr[row + 1]
+        row_elems = row_end - row_start
+        elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+        elem = row_start + elem_idx
+        a_val = weight_data[elem, sidx].astype("float32")
+        weight_val = data[weight_indices[elem], sidx, i]
+        return tvm.sum(a_val * weight_val, axis=[elem_idx, sidx])
+    return tvm.compute(oshape, f, name="sparse_dense_structure2",
+                       tag="sparse_dense_structure2")

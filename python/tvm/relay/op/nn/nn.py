@@ -801,7 +801,12 @@ def sparse_dense2(data, weight):
     return _make.sparse_dense2(data, weight.data, weight.indices, weight.indptr)
 
 def sparse_dense_structure(data, weight):
-    return _make.sparse_dense_structure(data, weight.data, weight.indices, weight.indptr)
+    return _make.sparse_dense_structure(data, weight.data, weight.indices,
+                                        weight.indptr)
+
+def sparse_dense_structure2(data, weight):
+    return _make.sparse_dense_structure2(data, weight.data, weight.indices,
+                                        weight.indptr)
 
 def contrib_conv2d_winograd_without_weight_transform(data,
                                                      weight,

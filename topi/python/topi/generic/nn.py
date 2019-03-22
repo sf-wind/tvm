@@ -203,6 +203,10 @@ def schedule_sparse_dense_structure(outs):
     return _default_schedule(outs, False)
 
 @tvm.target.generic_func
+def schedule_sparse_dense_structure2(outs):
+    return _default_schedule(outs, False)
+
+@tvm.target.generic_func
 def schedule_group_conv2d_nchw(outs):
     """Schedule for conv2d_nchw
 
