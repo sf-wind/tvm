@@ -76,12 +76,12 @@ def schedule_sparse_dense_structure(outs):
             # import pdb; pdb.set_trace()
             if "sparse_dense_structure" in op.tag:
                 (n, vi) = s[op].op.axis
-                (elem_idx, sidx) = s[op].op.reduce_axis
+                (elem_idx, bs_c) = s[op].op.reduce_axis
                 # s[op].unroll(sidx)
-                s[op].vectorize(vi)
-                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
-                s[op].compute_at(s[outs[0]], yo)
-                s[outs[0].op].vectorize(yi)
+                # s[op].vectorize(vi)
+                # (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
+                # s[op].compute_at(s[outs[0]], yo)
+                # s[outs[0].op].vectorize(yi)
                 # s[op].parallel(n)
         traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()

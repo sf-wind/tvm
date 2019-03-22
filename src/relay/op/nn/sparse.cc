@@ -131,12 +131,12 @@ bool SparseDenseStructureRel(const Array<Type>& types, int num_inputs, const Att
                     const TypeReporter& reporter) {
   CHECK_EQ(types.size(), 5);
   const auto* data = types[0].as<TensorTypeNode>();
-  // const auto* weight_data = types[1].as<TensorTypeNode>();
+  const auto* weight_data = types[1].as<TensorTypeNode>();
   // const auto* weight_indices = types[2].as<TensorTypeNode>();
   const auto* weight_indptr = types[3].as<TensorTypeNode>();
   if (data == nullptr) return false;
 
-  Array<IndexExpr> oshape({weight_indptr->shape[0] - 1, data->shape[2]});
+  Array<IndexExpr> oshape({(weight_indptr->shape[0] - 1) * weight_data->shape[1], data->shape[1]});
   reporter->Assign(types[4], TensorTypeNode::make(oshape, data->dtype));
   return true;
 }
