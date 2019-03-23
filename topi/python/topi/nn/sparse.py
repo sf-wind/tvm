@@ -43,7 +43,7 @@ def sparse_dense_bsrmv(data, weight_data, weight_indices, weight_indptr):
     (_, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
     (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
     NB = NB_plus_1 - 1
-    assert M == 1
+    # assert M == 1
 
     oshape = (M, NB, BS_R)
 
@@ -60,7 +60,7 @@ def sparse_dense_bsrmv(data, weight_data, weight_indices, weight_indptr):
         if weight_data.dtype == "uint16":
             block_ij_val = tvm_from_bf16(block_ij_val)
 
-        x_val = data[0, BS_C * j + c]
+        x_val = data[i, BS_C * j + c]
         return tvm.sum(block_ij_val * x_val, axis=[elem_idx, c])
 
     Y = tvm.compute(
@@ -98,34 +98,45 @@ def sparse_dense2(data, weight_data, weight_indices, weight_indptr):
 def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
     import topi
     (K, M) = topi.util.get_const_tuple(data.shape)
-    (_, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
+    (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
     (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
     NB = NB_plus_1 - 1    # assert topi.util.get_const_tuple(data.shape)[0] == 1
     # import pdb; pdb.set_trace()
     # oshape = (topi.util.get_const_tuple(data.shape)[0], topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
     oshape = (NB * BS_R, M)
-
     assert weight_indices.dtype == "int32", weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
     # bs_r = tvm.reduce_axis((0, weight_data.shape[1]), name="bs_r")
-    bs_c = tvm.reduce_axis((0, weight_data.shape[2]), name="bs_c")
-    def f(row, i):
-        # import pdb; pdb.set_trace()
-        assert row.dtype == "int32"
-        row_start = weight_indptr[row]
-        row_end = weight_indptr[row + 1]
+    bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
+    '''
+        def f(row, i):
+            assert row.dtype == "int32"
+            row_start = weight_indptr[row // BS_R]
+            row_end = weight_indptr[row //BS_R + 1]
+            row_elems = row_end - row_start
+            elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+            elem = row_start + elem_idx
+            a_val = weight_data[elem, row % BS_R, bs_c].astype("float32")
+            weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
+
+            return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
+        return tvm.compute(oshape, f, name="sparse_dense_structure_vm",
+                           tag="sparse_dense_structure_vm")
+    '''
+    def f(nb, r, i):
+        row_start = weight_indptr[nb]
+        row_end = weight_indptr[nb + 1]
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
-        # a_val = weight_data[elem, i % BS_R, bs_c].astype("float32")
-        # weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
-        a_val = weight_data[elem, 0, 0].astype("float32")
-        weight_val = data[weight_indices[elem], i]
-
+        a_val = weight_data[elem, r, bs_c].astype("float32")
+        weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
         return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
-    return tvm.compute(oshape, f, name="sparse_dense_structure",
-                       tag="sparse_dense_structure")
-
+    Y = tvm.compute((NB, BS_R, M), f,
+        name="sparse_dense_structure_block",
+        tag = "sparse_dense_structure_block")
+    return tvm.compute(oshape, lambda n, m: Y[n // BS_R, n % BS_R, m],
+        name="sparse_dense_structure", tag="sparse_dense_structure")
 
 @tvm.target.generic_func
 def sparse_dense_structure2(data, weight_data, weight_indices, weight_indptr):

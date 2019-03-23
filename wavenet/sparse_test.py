@@ -38,23 +38,27 @@ logging.basicConfig(level=logging.DEBUG)
 dtype = "float32"
 itype = 'int32'
 
-M = 8
+M = 1
 N = 3072
 K = 1024
+'''
+N = 8
+K = 8
+'''
 
-N = 16
-K = 16
-
+context = "llvm -mcpu=core-avx2 -target=x86_64-linux-gnu"
+skl_target = tvm.target.create(context)
+ctx = tvm.context(context, 0)
 
 use_structure = False
-BS_R = 2
-BS_C = 2
+BS_R = 1
+BS_C = 1
 if args.bs_r > 0 and args.bs_c > 0:
     BS_R = args.bs_r
     BS_C = args.bs_c
-    assert M % BS_C == 0
+    assert M % BS_R == 0
     assert N % BS_R == 0
-ctx = tvm.context("llvm -mcpu=core-avx2", 0)
+    assert K % BS_C == 0
 
 density = 0.04
 a = tvm.nd.array(np.random.rand(M, K).astype(dtype), ctx)
@@ -62,7 +66,7 @@ mask = np.random.choice([0, 1], size=(N //BS_R, K // BS_C), p=[1-density, densit
 mask = np.repeat(mask, BS_C, axis=1)
 mask = np.repeat(mask, BS_R, axis=0)
 bb = (np.random.rand(N, K).astype(dtype) * mask).astype(dtype)
-bsr_m = bsr_matrix(bb)
+bsr_m = bsr_matrix(bb, blocksize=(BS_R, BS_C))
 csr_m = bsr_m.tocsr(True)
 b = tvm.nd.array(bb, ctx)
 num_nonzeros = np.count_nonzero(b.asnumpy())
@@ -87,6 +91,7 @@ def to_csr(v, density=0.04):
     return CSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, density=density)
 
 def to_bsr(v, density=0.04):
+    # import pdb; pdb.set_trace()
     name = v.name_hint
     (N, K) = v.type_annotation.concrete_shape
     nnz = num_nonzeros
@@ -114,6 +119,7 @@ def instantiate(param):
         return [(param.name_hint, tvm.nd.array(np.zeros(param.type_annotation.concrete_shape).astype(param.type_annotation.dtype), ctx))
         ]
 
+print("<<<<< sparse_dense_csrmv")
 x = relay.var("x", shape=[M, K], dtype=dtype)
 fc_0_W = to_csr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
 zero = relay.var("zero", shape=(M, N), dtype=dtype)
@@ -122,7 +128,58 @@ outputs = relay.add(relay.nn.sparse_dense(x, fc_0_W), zero)
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 relay.ir_pass.infer_type(func)
 
-skl_target = tvm.target.create('llvm -mcpu=core-avx2 -target=x86_64-linux-gnu')
+param_vars = [
+    fc_0_W, zero
+]
+input_vars = [x]
+
+params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
+inputs = collections.OrderedDict(
+    {
+        "x": a
+    })
+
+# import pdb; pdb.set_trace()
+
+with relay.build_config(opt_level=3):
+    func = relay.optimize(func, target=skl_target, params=params)
+    # print(func.astext(show_meta_data=False))
+    # import pdb; pdb.set_trace()
+    func = relay.ir_pass.infer_type(func)
+    graph, lib, new_params = relay.build_module.build(
+        func, target=skl_target,  params=params)
+    '''
+    print(lib.get_source())
+    print(lib.get_source('asm'))
+    for (k, v) in params.items():
+        print(k, v.shape)
+    for (k, v) in new_params.items():
+        print(k, v.shape)
+    '''
+
+r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
+r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
+module = graph_runtime.create(graph, lib, ctx)
+module.set_input(**r_new_params)
+module.set_input(**r_inputs)
+module.run()
+ro = tvm.nd.empty([M, N])
+module.get_output(0, ro)
+tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
+
+ftimer = module.module.time_evaluator("run", ctx, 100)
+for i in range(5):
+    prof_res = ftimer()
+    print("TVM time: ", prof_res.mean)
+
+print("<<<<< sparse_dense_bsrmv")
+x = relay.var("x", shape=[M, K], dtype=dtype)
+fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
+zero = relay.var("zero", shape=(M, N), dtype=dtype)
+outputs = relay.add(relay.nn.sparse_dense(x, fc_0_W), zero)
+
+func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+relay.ir_pass.infer_type(func)
 
 param_vars = [
     fc_0_W, zero
@@ -169,7 +226,7 @@ for i in range(5):
     print("TVM time: ", prof_res.mean)
 
 
-print("sparse_dense2")
+print("<<<<< sparse_dense2")
 # import pdb; pdb.set_trace()
 x = relay.var("x", shape=[K, M], dtype=dtype)
 fc_0_W = to_csr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
@@ -180,7 +237,6 @@ func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 relay.ir_pass.infer_type(func)
 # print(func.astext(show_meta_data=False))
 # import pdb; pdb.set_trace()
-skl_target = tvm.target.create('llvm -mcpu=core-avx2 -target=x86_64-linux-gnu')
 
 param_vars = [
     fc_0_W, zero
@@ -229,19 +285,18 @@ for i in range(5):
     print("TVM time: ", prof_res.mean)
 
 
-print("sparse_dense_structure")
-import pdb; pdb.set_trace()
+print("<<<<< sparse_dense_structure")
+# import pdb; pdb.set_trace()
 x = relay.var("x", shape=[K, M], dtype=dtype)
 fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
 zero = relay.var("zero", shape=(N, M), dtype=dtype)
 outputs = relay.add(relay.nn.sparse_dense_structure(x, fc_0_W), zero)
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
-print(func.astext(show_meta_data=False))
+# print(func.astext(show_meta_data=False))
 relay.ir_pass.infer_type(func)
 print(func.astext(show_meta_data=False))
 # import pdb; pdb.set_trace()
-skl_target = tvm.target.create('llvm -mcpu=core-avx2 -target=x86_64-linux-gnu')
 
 param_vars = [
     fc_0_W, zero
@@ -278,11 +333,11 @@ r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
 module = graph_runtime.create(graph, lib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 module.run()
 ro = tvm.nd.empty([N, M])
-# import pdb; pdb.set_trace()
 module.get_output(0, ro)
+# import pdb; pdb.set_trace()
 tvm.testing.assert_allclose(np.transpose(ro.asnumpy()), answer, rtol=1e-5)
 
 ftimer = module.module.time_evaluator("run", ctx, 100)

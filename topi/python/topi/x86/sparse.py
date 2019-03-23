@@ -29,7 +29,7 @@ def schedule_sparse_dense(outs):
                 (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 32)
                 s[Y_reshape].compute_at(s[outs[0]], yo)
                 s[outs[0].op].vectorize(yi)
-        traverse_inline(s, outs[0].op, callback)
+    traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()
     # C = outs[0]
     # A, B = outs[0].op.input_tensors
@@ -75,14 +75,39 @@ def schedule_sparse_dense_structure(outs):
         def callback(op):
             # import pdb; pdb.set_trace()
             if "sparse_dense_structure" in op.tag:
+                '''
                 (n, vi) = s[op].op.axis
-                # (elem_idx, bs_c) = s[op].op.reduce_axis
-                # s[op].unroll(sidx)
-                # s[op].vectorize(vi)
+                (elem_idx, bs_c) = s[op].op.reduce_axis
+                s[op].unroll(bs_c)
+                s[op].vectorize(vi)
                 # (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
                 # s[op].compute_at(s[outs[0]], yo)
                 # s[outs[0].op].vectorize(yi)
                 # s[op].parallel(n)
+                '''
+
+                # import pdb; pdb.set_trace()
+                Y = op.input_tensors[0]
+                Y_op = s[Y].op
+                assert Y_op.tag == "sparse_dense_structure_block"
+                (nb, r, i) = Y_op.axis
+                (elem_idx, bs_c) = Y_op.reduce_axis
+                # (nbo, nbi) = s[Y_op].split(nb, 8)
+                # CC = s.cache_write(Y, 'global')
+                # s[CC].compute_at(s[Y], nb)
+
+                s[Y_op].reorder(nb, r, elem_idx, bs_c, i)
+                BF = s.rfactor(Y, bs_c, factor_axis=3)
+                (fnb, fr, fi, fbsc) = BF.op.axis
+                s[BF].reorder(fnb, fr, fbsc, fi)
+                # BS_R = get_const_int(r.dom.extent)
+                (n, m) = op.axis
+                # (no, ni) = s[op].split(n, 8)
+                # M = get_const_int(m.dom.extent)
+                s[BF].compute_at(s[Y], s[Y].op.axis[0])
+                s[BF].vectorize(fbsc)
+                s[op].vectorize(m)
+
         traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()
     # C = outs[0]
