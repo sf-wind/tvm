@@ -7,7 +7,6 @@ from scipy.sparse import bsr_matrix
 
 import tvm.contrib.debugger.debug_runtime as graph_runtime
 # import tvm.contrib.graph_runtime as graph_runtime
-import torch
 import logging
 import collections
 import netron
