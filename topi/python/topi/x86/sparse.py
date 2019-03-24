@@ -92,21 +92,50 @@ def schedule_sparse_dense_structure(outs):
                 assert Y_op.tag == "sparse_dense_structure_block"
                 (nb, r, i) = Y_op.axis
                 (elem_idx, bs_c) = Y_op.reduce_axis
+                BS_R = get_const_int(Y.shape[1])
                 # (nbo, nbi) = s[Y_op].split(nb, 8)
                 # CC = s.cache_write(Y, 'global')
                 # s[CC].compute_at(s[Y], nb)
-
-                s[Y_op].reorder(nb, r, elem_idx, bs_c, i)
-                BF = s.rfactor(Y, bs_c, factor_axis=3)
-                (fnb, fr, fi, fbsc) = BF.op.axis
-                s[BF].reorder(fnb, fr, fbsc, fi)
-                # BS_R = get_const_int(r.dom.extent)
-                (n, m) = op.axis
-                # (no, ni) = s[op].split(n, 8)
-                # M = get_const_int(m.dom.extent)
-                s[BF].compute_at(s[Y], s[Y].op.axis[0])
-                s[BF].vectorize(fbsc)
-                s[op].vectorize(m)
+                s[Y_op].reorder(nb, elem_idx, r, bs_c, i)
+                BS_C = get_const_int(bs_c.dom.extent)
+                I = get_const_int(i.dom.extent)
+                if (I >= BS_C) and (I >= BS_R):
+                    # bsci = s[Y_op].fuse(bs_c, i)
+                    s[Y_op].vectorize(i)
+                else:
+                    BF = s.rfactor(Y, bs_c, factor_axis=2)
+                    (fnb, fr, fbsc, fi) = BF.op.axis
+                    (felem_idx,) = BF.op.reduce_axis
+                    s[BF].reorder(fnb, felem_idx, fr, fbsc, fi)
+                    '''
+                    do not fuse explicitly, rely on compiler to do it.
+                    fri = s[BF].fuse(fbsc, fi)
+                    frri = s[BF].fuse(fri, fr)
+                    s[BF].vectorize(frri)
+                    '''
+                    # s[BF].vectorize(fri)
+                    # BS_R = get_const_int(r.dom.extent)
+                    # (n, m) = op.axis
+                    # (no, ni) = s[op].split(n, 8)
+                    # M = get_const_int(m.dom.extent)
+                    s[BF].compute_at(s[Y], s[Y].op.axis[0])
+                    # import pdb; pdb.set_trace()
+                    '''
+                    FR = get_const_int(fr.dom.extent)
+                    FBSC = get_const_int(fbsc.dom.extent)
+                    if FR >= FBSC:
+                        s[BF].vectorize(fr)
+                    else:
+                        s[BF].vectorize(fbsc)
+                    '''
+                # (n, m) = op.axis
+                op_o = op.output(0)
+                # import pdb; pdb.set_trace()
+                if op != s[outs[0]].op:
+                    (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[0], 32)
+                    s[op_o].compute_at(s[outs[0]], yo)
+                    s[Y].compute_at(s[outs[0]], yo)
+                    s[outs[0].op].vectorize(yi)
 
         traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()
