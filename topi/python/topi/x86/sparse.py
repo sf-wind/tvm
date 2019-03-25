@@ -86,7 +86,9 @@ def schedule_sparse_dense_structure(outs):
                 # s[op].parallel(n)
                 '''
 
-                # import pdb; pdb.set_trace()
+                #import pdb; pdb.set_trace()
+                op_o = op.output(0)
+                I = get_const_int(op_o.shape[1])
                 Y = op.input_tensors[0]
                 Y_op = s[Y].op
                 assert Y_op.tag == "sparse_dense_structure_block"
@@ -96,17 +98,54 @@ def schedule_sparse_dense_structure(outs):
                 # (nbo, nbi) = s[Y_op].split(nb, 8)
                 # CC = s.cache_write(Y, 'global')
                 # s[CC].compute_at(s[Y], nb)
-                s[Y_op].reorder(nb, elem_idx, r, bs_c, i)
+                s[Y_op].reorder(nb, elem_idx, bs_c, r, i)
                 BS_C = get_const_int(bs_c.dom.extent)
-                I = get_const_int(i.dom.extent)
+                BF = None
                 if (I >= BS_C) and (I >= BS_R):
                     # bsci = s[Y_op].fuse(bs_c, i)
                     s[Y_op].vectorize(i)
                 else:
-                    BF = s.rfactor(Y, bs_c, factor_axis=2)
-                    (fnb, fr, fbsc, fi) = BF.op.axis
+                    bsc_axis = 1
+                    if BS_C > BS_R and BS_C > I:
+                        bsc_axis = 3
+                    elif BS_C > BS_R:
+                        bsc_axis = 2
+                    else:
+                        bsc_axis = 1
+
+                    BF = s.rfactor(Y, bs_c, factor_axis=bsc_axis)
+                    (fnb, x2, x1, x0) = BF.op.axis
                     (felem_idx,) = BF.op.reduce_axis
-                    s[BF].reorder(fnb, felem_idx, fr, fbsc, fi)
+                    lx0 = get_const_int(x0.dom.extent)
+                    lx1 = get_const_int(x1.dom.extent)
+                    lx2 = get_const_int(x2.dom.extent)
+                    if lx0 >= lx1 and lx0 >= lx2:
+                        xx0 = x0
+                        if lx1 >= lx2:
+                            xx1 = x1
+                            xx2 = x2
+                        else:
+                            xx1 = x2
+                            xx2 = x1
+                    elif lx1 >= lx2:
+                        xx0 = x1
+                        if lx0 >= lx2:
+                            xx1 = x0
+                            xx2 = x2
+                        else:
+                            xx1 = x2
+                            xx2 = x0
+                    else:
+                        xx0 = x2
+                        if lx0 >= lx1:
+                            xx1 = x0
+                            xx2 = x1
+                        else:
+                            xx1 = x1
+                            xx2 = x0
+                    s[BF].reorder(fnb, felem_idx, xx2, xx1, xx0)
+                    # s[BF].vectorize(fr)
+
                     '''
                     do not fuse explicitly, rely on compiler to do it.
                     fri = s[BF].fuse(fbsc, fi)
@@ -118,7 +157,7 @@ def schedule_sparse_dense_structure(outs):
                     # (n, m) = op.axis
                     # (no, ni) = s[op].split(n, 8)
                     # M = get_const_int(m.dom.extent)
-                    s[BF].compute_at(s[Y], s[Y].op.axis[0])
+                    ### s[BF].compute_at(s[Y], s[Y].op.axis[0])
                     # import pdb; pdb.set_trace()
                     '''
                     FR = get_const_int(fr.dom.extent)
@@ -135,6 +174,8 @@ def schedule_sparse_dense_structure(outs):
                     (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[0], 32)
                     s[op_o].compute_at(s[outs[0]], yo)
                     s[Y].compute_at(s[outs[0]], yo)
+                    if BF is not None:
+                        s[BF].compute_at(s[outs[0]], yo)
                     s[outs[0].op].vectorize(yi)
 
         traverse_inline(s, outs[0].op, callback)
