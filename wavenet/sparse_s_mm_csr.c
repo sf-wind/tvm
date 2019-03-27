@@ -112,7 +112,6 @@ int main() {
     sparse_matrix_t        csrA = NULL;
     descr_type_gen.type = SPARSE_MATRIX_TYPE_GENERAL;
 /* Allocation of memory */
-    /* N * K */
     values_A = (float *)mkl_malloc(sizeof(float) * NNZ, ALIGN);
     columns_A = (MKL_INT *)mkl_malloc(sizeof(MKL_INT) * NNZ, ALIGN);
     rowIndex_A = (MKL_INT *)mkl_malloc(sizeof(MKL_INT) * (N + 1), ALIGN);

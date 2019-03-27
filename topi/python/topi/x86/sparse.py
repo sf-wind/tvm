@@ -146,11 +146,11 @@ def schedule_sparse_dense_structure(outs):
                     lxx0 = get_const_int(xx0.dom.extent)
                     if lxx0 >= 16:
                         # xx0 has enough parallelism
-                        # for m = 1, bs_r = 16, bs_c = 1
+                        # for m = 2, bs_r = 16, bs_c = 1
                         s[BF].reorder(fnb, xx2, xx1, felem_idx, xx0)
                         s[BF].vectorize(xx0)
                     else:
-                        # for m = 1, bs_r = 8, bs_c = 1
+                        # for m = 2, bs_r = 8, bs_c = 1
                         s[BF].reorder(fnb, xx2, felem_idx, xx1, xx0)
                     # s[BF].vectorize(xx0)
 
