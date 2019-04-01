@@ -50,7 +50,7 @@ def schedule_sparse_dense2(outs):
                 (n, vi) = s[op].op.axis
                 # k = s[op].op.reduce_axis
                 s[op].vectorize(vi)
-                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
+                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 16)
                 s[op].compute_at(s[outs[0]], yo)
                 s[outs[0].op].vectorize(yi)
                 # s[op].parallel(n)
