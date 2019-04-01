@@ -77,7 +77,6 @@ RELAY_REGISTER_OP("nn.sparse_dense")
     .add_type_rel("SparseDense", SparseDenseRel);
 
 
-
 // relay.nn.dense
 TVM_REGISTER_NODE_TYPE(SparseDense2Attrs);
 

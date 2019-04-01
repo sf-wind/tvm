@@ -18,7 +18,11 @@ dtype = "float32"
 
 rnn_dims = 1024
 fc_dims = 1024
+<<<<<<< HEAD
 
+=======
+density = 0.03
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
 feat_dims = 24
 aux_dims = 32
 n_classes = 2 ** 8
@@ -32,14 +36,27 @@ BSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'BS_
 def sparse_dense(X, W, B, **kwargs):
     return relay.nn.bias_add(relay.nn.sparse_dense(X, W), B)
 
+<<<<<<< HEAD
 def to_sparse(v, density=0.04, BS_R=16, BS_C=1):
+=======
+def to_sparse(v, density=density, BS_R=16, BS_C=1):
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
     name = v.name_hint
     (N, K) = v.type_annotation.concrete_shape
     nnz = int(density * N * K)
     num_blocks = int(nnz / (BS_R * BS_C)) + 1
+<<<<<<< HEAD
     v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=dtype)
     v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype="int32")
     v_indptr = relay.var(name + "_indptr", shape=(N // BS_R + 1,), dtype="int32")
+=======
+    assert N % BS_R == 0
+    v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=dtype)
+    v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype="int32")
+    v_indptr = relay.var(name + "_indptr", shape=((N // BS_R) + 1,), dtype="int32")
+
+    np.testing.assert_allclose(num_blocks * BS_R * BS_C, density * N * K, rtol=1e-2)
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
     return BSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, BS_R=BS_R, BS_C=BS_C, density=density)
 
 def approx_sigmoid(v):
@@ -65,12 +82,21 @@ def gru(X, H, W_X, W_H, B, **kwargs):
     HT = relay.nn.sparse_dense(H, W_H)
     XT_gates = relay.split(XT, indices_or_sections=3, axis=1)
     HT_gates = relay.split(HT, indices_or_sections=3, axis=1)
+<<<<<<< HEAD
     u_t = approx_sigmoid(XT_gates[0] + HT_gates[0])
     r_t = approx_sigmoid(XT_gates[1] + HT_gates[1])
     e_t = approx_tanh(r_t * HT_gates[2] + XT_gates[2])
     # u_t = relay.sigmoid(XT_gates[0] + HT_gates[0])
     # r_t = relay.sigmoid(XT_gates[1] + HT_gates[1])
     # e_t = relay.tanh(r_t * HT_gates[2] + XT_gates[2])
+=======
+    # u_t = approx_sigmoid(XT_gates[0] + HT_gates[0])
+    # r_t = approx_sigmoid(XT_gates[1] + HT_gates[1])
+    # e_t = approx_tanh(r_t * HT_gates[2] + XT_gates[2])
+    u_t = relay.sigmoid(XT_gates[0] + HT_gates[0])
+    r_t = relay.sigmoid(XT_gates[1] + HT_gates[1])
+    e_t = relay.tanh(r_t * HT_gates[2] + XT_gates[2])
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
     return u_t * HT_gates[0] + (relay.expr.const(1.0, dtype=dtype) - u_t) * e_t
 
 gru_0_W_X = to_sparse(relay.var("gru_0_W_X", shape=(3 * rnn_dims, rnn_dims), dtype=dtype))
@@ -88,7 +114,11 @@ fc_1_B = relay.var("fc_1_B",
                    dtype=dtype)
 relu1_o = relay.nn.relu(sparse_dense(gru2_add1_o, fc_1_W, fc_1_B))
 
+<<<<<<< HEAD
 fc_3_W = to_sparse(relay.var("fc_3_W", shape=(n_classes, fc_dims), dtype=dtype))
+=======
+fc_3_W = to_sparse(relay.var("fc_3_W", shape=(n_classes, fc_dims), dtype=dtype), density=0.4)
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
 fc_3_B = relay.var("fc_3_B", shape=(n_classes,), dtype=dtype)
 fc_3_o = sparse_dense(relu1_o, fc_3_W, fc_3_B)
 

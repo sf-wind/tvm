@@ -26,10 +26,12 @@ l = p.l
 hd = p.hd
 tl = p.tl
 nth = p.nth
+update = p.update
 length = p.length
 map = p.map
 foldl = p.foldl
 foldr = p.foldr
+foldr1 = p.foldr1
 sum = p.sum
 
 concat = p.concat
@@ -148,6 +150,23 @@ def test_nth():
 
     assert got == expected
 
+def test_update():
+    expected = list(range(10))
+    l = nil()
+    # create zero initialized list
+    for i in range(len(expected)):
+        l = cons(build_nat(0), l)
+
+    # set value
+    for i, v in enumerate(expected):
+        l = update(l, build_nat(i), build_nat(v))
+
+    got = []
+    for i in range(len(expected)):
+        got.append(count(intrp.evaluate(nth(l, build_nat(i)))))
+
+    assert got == expected
+
 def test_length():
     a = relay.TypeVar("a")
     assert mod[length].checked_type == relay.FuncType([l(a)], nat(), [a])
@@ -208,6 +227,23 @@ def test_foldr():
     same = to_list(res)
     assert len(same) == 3
     assert count(same[0]) == 1 and count(same[1]) == 2 and count(same[2]) == 3
+
+
+def test_foldr1():
+    a = relay.TypeVar("a")
+    lhs = mod[p.foldr1].checked_type
+    rhs = relay.FuncType([relay.FuncType([a, a], a), l(a)], a, [a])
+    assert lhs == rhs
+
+    x = relay.Var("x")
+    y = relay.Var("y")
+    f = relay.Function([x, y], add(x, y))
+    res = intrp.evaluate(foldr1(f,
+                                cons(build_nat(1),
+                                    cons(build_nat(2),
+                                         cons(build_nat(3), nil())))))
+
+    assert count(res) == 6
 
 
 def test_sum():
@@ -629,6 +665,7 @@ if __name__ == "__main__":
     test_map()
     test_foldl()
     test_foldr()
+    test_foldr1()
     test_concat()
     test_filter()
     test_zip()

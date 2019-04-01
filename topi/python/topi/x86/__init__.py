@@ -10,5 +10,6 @@ from .injective import *
 from .pooling import schedule_pool, schedule_global_pool
 from .bitserial_conv2d import schedule_bitserial_conv2d
 from .depthwise_conv2d import schedule_depthwise_conv2d_NCHWc
+from .batch_matmul import schedule_batch_matmul
 from .dense import *
 from .sparse import *

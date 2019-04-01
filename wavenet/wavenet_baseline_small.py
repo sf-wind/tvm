@@ -21,6 +21,7 @@ class G(nn.Module):
         self.fc3 = nn.Linear(fc_dims, n_classes)
 
     def forward(self, x, h1):
+<<<<<<< HEAD
         h1_prime = self.rnn1(x, h1)
         gru2_add1_o = h1_prime + x
         relu1_o = nn.functional.relu(self.fc1(gru2_add1_o))
@@ -29,6 +30,18 @@ class G(nn.Module):
 
 traced_f = torch.jit.trace(G(), (x, h1,))
 print(traced_f.graph)
+=======
+        with torch.no_grad():
+            h1_prime = self.rnn1(x, h1)
+            gru2_add1_o = h1_prime + x
+            relu1_o = nn.functional.relu(self.fc1(gru2_add1_o))
+            fc_3_o = self.fc3(relu1_o)
+            return (fc_3_o, h1_prime)
+
+traced_f = torch.jit.trace(G(), (x, h1,))
+traced_f(x, h1)
+print(traced_f.graph_for(x, h1))
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
 for i in range(5):
     import time
     t = time.perf_counter()

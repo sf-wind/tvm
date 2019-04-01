@@ -1,10 +1,21 @@
 TVM Contributors
 ================
-TVM adopts the Apache style model and governs by merit. We believe that it is important to create an inclusive community where everyone can use,
+TVM adopts the Apache way and governs by merit. We believe that it is important to create an inclusive community where everyone can use,
 contribute to, and influence the direction of the project. We actively invite contributors who have earned the merit to be part of the development community.
 
 See the [community structure document](http://docs.tvm.ai/contribute/community.html) for the explanation of community structure and contribution guidelines.
 
+## Mentors
+
+TVM is now part of the Apache Incubator.
+We are fortunate to have the following mentors.
+
+- Markus Weimer @markusweimer
+- Sebastian Schelter @sscdotopen
+- Byung-Gon Chun @bgchun
+- Henry Saputra @hsaputra
+- Timothy Chen @tnachen
+- Furkan KAMACI @kamaci
 
 ## Committers
 
@@ -19,6 +30,7 @@ We do encourage everyone to work anything they are interested in.
 - [Yizhi Liu](https://github.com/yzhliu) (PMC): @yzhliu - jvm, topi, relay
 - [Masahiro Masuda](https://github.com/masahi): @masahi - topi, relay
 - [Thierry Moreau](https://github.com/tmoreau89) (PMC): @tmoreau89 - vta
+- [Kazutaka Morita](https://github.com/kazum): @kazum - frontends, opencl
 - [Jared Roesch](https://github.com/jroesch): @jroesch - relay
 - [Siva](https://github.com/srkreddy1238): @srkreddy1238 - frontends, golang
 - [Haichen Shen](https://github.com/icemelon9) (PMC): @icemelon9 - relay, topi

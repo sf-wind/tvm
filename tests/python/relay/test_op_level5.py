@@ -357,6 +357,38 @@ def test_roi_align():
     verify_roi_align((4, 4, 16, 16), (32, 5), pooled_size=7, spatial_scale=0.5, sample_ratio=2)
 
 
+def test_roi_pool():
+    def verify_roi_pool(data_shape, rois_shape, pooled_size, spatial_scale):
+        data = relay.var("data", relay.ty.TensorType(data_shape, "float32"))
+        rois = relay.var("rois", relay.ty.TensorType(rois_shape, "float32"))
+        z = relay.vision.roi_pool(data, rois, pooled_size=(pooled_size, pooled_size),
+                                   spatial_scale=spatial_scale, layout="NCHW")
+        zz = relay.ir_pass.infer_type(z)
+
+        batch, channel, in_size, _ = data_shape
+        num_roi = rois_shape[0]
+        assert zz.checked_type == relay.ty.TensorType(
+                (num_roi, channel, pooled_size, pooled_size), "float32")
+
+        func = relay.Function([data, rois], z)
+        func = relay.ir_pass.infer_type(func)
+        np_data = np.random.uniform(size=data_shape).astype("float32")
+        np_rois = np.random.uniform(size=rois_shape).astype('float32') * in_size
+        np_rois[:, 0] = np.random.randint(low = 0, high = batch, size = num_roi).astype('float32')
+        ref_res = topi.testing.roi_pool_nchw_python(np_data, np_rois, pooled_size=pooled_size,
+                                                     spatial_scale=spatial_scale)
+        for target, ctx in ctx_list():
+            intrp1 = relay.create_executor("graph", ctx=ctx, target=target)
+            op_res1 = intrp1.evaluate(func)(np_data, np_rois)
+            tvm.testing.assert_allclose(op_res1.asnumpy(), ref_res, rtol=1e-4)
+            intrp2 = relay.create_executor("debug", ctx=ctx, target=target)
+            op_res2 = intrp2.evaluate(func)(np_data, np_rois)
+            tvm.testing.assert_allclose(op_res2.asnumpy(), ref_res, rtol=1e-4)
+
+    verify_roi_pool((1, 4, 16, 16), (32, 5), pooled_size=7, spatial_scale=1.0)
+    verify_roi_pool((4, 4, 16, 16), (32, 5), pooled_size=7, spatial_scale=0.5)
+
+
 def test_proposal():
     def verify_proposal(np_cls_prob, np_bbox_pred, np_im_info, np_out, attrs):
         cls_prob = relay.var("cls_prob", relay.ty.TensorType(np_cls_prob.shape, "float32"))
@@ -457,6 +489,66 @@ def test_yolo_reorg():
     verify_yolo_reorg((1, 100, 20, 20), 10)
     verify_yolo_reorg((1, 4, 6, 6), 2)
 
+
+def test_deformable_conv2d():
+    def test_infer_type(batch, in_channel, size, out_channel, deformable_groups, groups):
+        data_shape = (batch, in_channel, size, size)
+        data = relay.var("data", shape=data_shape)
+        offset = relay.var("offset")
+        kernel = relay.var("kernel")
+        kernel_size = (3, 3)
+        y = relay.nn.deformable_conv2d(data, offset, kernel,
+            strides=(1, 1),
+            padding=(1, 1),
+            dilation=(1, 1),
+            kernel_size=kernel_size,
+            deformable_groups=deformable_groups,
+            groups=groups,
+            channels=out_channel)
+        weight_shape = (out_channel, in_channel // groups, kernel_size[0], kernel_size[1])
+        out_shape = (batch, out_channel, size, size)
+        offset_shape = (batch, 2 * kernel_size[0] * kernel_size[1] * deformable_groups, out_shape[2], out_shape[3])
+        yy = relay.ir_pass.infer_type(y)
+        assert yy.checked_type == relay.TensorType(out_shape)
+        assert yy.args[1].checked_type == relay.TensorType(offset_shape), yy.args[1].checked_type
+        assert yy.args[2].checked_type == relay.TensorType(weight_shape)
+
+    test_infer_type(1, 4, 16, 4, 4, 1)
+    test_infer_type(2, 4, 16, 4, 1, 2)
+
+
+    def test_run(batch, in_channel, size, out_channel, deformable_groups, groups):
+        kernel_size = (3, 3)
+        data_shape = (batch, in_channel, size, size)
+        offset_shape = (batch, 2 * kernel_size[0] * kernel_size[1] * deformable_groups, size, size)
+        kernel_shape = (out_channel, in_channel // groups, kernel_size[0], kernel_size[1])
+        dtype = 'float32'
+        data = relay.var("data", shape=data_shape, dtype=dtype)
+        offset = relay.var("offset")
+        kernel = relay.var("kernel")
+        y = relay.nn.deformable_conv2d(data, offset, kernel,
+            strides=(1, 1),
+            padding=(1, 1),
+            dilation=(1, 1),
+            kernel_size=kernel_size,
+            deformable_groups=deformable_groups,
+            groups=groups,
+            channels=out_channel)
+        func = relay.Function([data, offset, kernel], y)
+        data = np.random.uniform(size=data_shape).astype(dtype)
+        offset = np.random.uniform(size=offset_shape).astype(dtype)
+        kernel = np.random.uniform(size=kernel_shape).astype(dtype)
+        ref_res = topi.testing.deformable_conv2d_nchw_python(data, offset, kernel, stride=(1, 1), padding=(1, 1), dilation=(1, 1), deformable_groups=deformable_groups, groups=groups)
+
+        for target, ctx in ctx_list():
+            for kind in ["graph", "debug"]:
+                intrp1 = relay.create_executor(kind, ctx=ctx, target=target)
+                op_res1 = intrp1.evaluate(func)(data, offset, kernel)
+                tvm.testing.assert_allclose(op_res1.asnumpy(), ref_res, rtol=1e-5, atol=1e-5)
+    test_run(1, 4, 16, 4, 1, 1)
+    test_run(2, 4, 16, 4, 4, 1)
+
+
 if __name__ == "__main__":
     test_resize_infer_type()
     test_resize()
@@ -464,7 +556,9 @@ if __name__ == "__main__":
     test_multibox_transform_loc()
     test_get_valid_counts()
     test_roi_align()
+    test_roi_pool()
     test_proposal()
     test_yolo_reorg_infer_shape()
     test_yolo_reorg()
     test_non_max_suppression()
+    test_deformable_conv2d()

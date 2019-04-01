@@ -78,7 +78,7 @@ class ThreadAllreduceBuilder final : public IRMutator {
   Expr Mutate_(const Load* op, const Expr& e) final {
     auto it = load_remap_.find(op->buffer_var.get());
     if (it != load_remap_.end()) {
-      CHECK(is_zero(op->index));
+      CHECK(is_zero(op->index)) << e;
       return it->second;
     } else {
       return IRMutator::Mutate_(op, e);
@@ -175,6 +175,9 @@ class ThreadAllreduceBuilder final : public IRMutator {
     }
     std::vector<Stmt> seq;
     std::vector<Var> shared_bufs(size);
+    // This sync is necessary because there might be incomplete read of
+    // previous iteration on the same buffer.
+    seq.emplace_back(SyncThread("shared"));
     for (size_t idx = 0; idx < size; ++idx) {
       shared_bufs[idx] = Var("red_buf"+std::to_string(idx), Handle());
       Expr pred = const_true(types[idx].lanes());

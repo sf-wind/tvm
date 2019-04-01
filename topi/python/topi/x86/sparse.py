@@ -23,20 +23,20 @@ def schedule_sparse_dense(outs):
             s[Y_bsrmv].vectorize(br)
             (mo, no) = s[Y_reshape].op.axis
             (noo, noi) = s[Y_reshape].split(no, BS_R)
+            s[Y_reshape].unroll(noo)
             s[Y_bsrmv].compute_at(s[Y_reshape], noi)
             s[Y_reshape].vectorize(noi)
             if op != s[outs[0]].op:
                 (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 32)
                 s[Y_reshape].compute_at(s[outs[0]], yo)
+                s[outs[0].op].parallel(yo)
                 s[outs[0].op].vectorize(yi)
-    traverse_inline(s, outs[0].op, callback)
-    # import pdb; pdb.set_trace()
-    # C = outs[0]
-    # A, B = outs[0].op.input_tensors
-    # A1, A2, A3, A4 = A.op.input_tensors
-    # print(tvm.lower(s, [A1, A2, A3, A4, B, C], simple_mode=True))
+            else:
+                s[Y_reshape].parallel(noo)
 
+    traverse_inline(s, outs[0].op, callback)
     return s
+
 
 @generic.schedule_sparse_dense2.register(["cpu"])
 def schedule_sparse_dense2(outs):

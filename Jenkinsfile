@@ -21,8 +21,8 @@
 // - Periodically cleanup the old versions on local workers
 //
 ci_lint = "tvmai/ci-lint:v0.50"
-ci_gpu = "tvmai/ci-gpu:v0.50"
-ci_cpu = "tvmai/ci-cpu:v0.41"
+ci_gpu = "tvmai/ci-gpu:v0.51"
+ci_cpu = "tvmai/ci-cpu:v0.50"
 ci_i386 = "tvmai/ci-i386:v0.50"
 
 // tvm libraries
@@ -115,6 +115,8 @@ stage('Build') {
            echo set\\(USE_CUDA ON\\) >> config.cmake
            echo set\\(USE_OPENGL ON\\) >> config.cmake
            echo set\\(USE_LLVM llvm-config-6.0\\) >> config.cmake
+           echo set\\(USE_NNPACK ON\\) >> config.cmake
+           echo set\\(NNPACK_PATH /NNPACK/build/\\) >> config.cmake
            echo set\\(USE_RPC ON\\) >> config.cmake
            echo set\\(USE_SORT ON\\) >> config.cmake
            echo set\\(USE_GRAPH_RUNTIME ON\\) >> config.cmake

@@ -63,12 +63,21 @@ def gru(X, H, W_X, W_H, B, **kwargs):
     HT = relay.nn.dense(H, W_H)
     XT_gates = relay.split(XT, indices_or_sections=3, axis=1)
     HT_gates = relay.split(HT, indices_or_sections=3, axis=1)
+<<<<<<< HEAD
     u_t = approx_sigmoid(XT_gates[0] + HT_gates[0])
     r_t = approx_sigmoid(XT_gates[1] + HT_gates[1])
     e_t = approx_tanh(r_t * HT_gates[2] + XT_gates[2])
     # u_t = relay.sigmoid(XT_gates[0] + HT_gates[0])
     # r_t = relay.sigmoid(XT_gates[1] + HT_gates[1])
     # e_t = relay.tanh(r_t * HT_gates[2] + XT_gates[2])
+=======
+    # u_t = approx_sigmoid(XT_gates[0] + HT_gates[0])
+    # r_t = approx_sigmoid(XT_gates[1] + HT_gates[1])
+    # e_t = approx_tanh(r_t * HT_gates[2] + XT_gates[2])
+    u_t = relay.sigmoid(XT_gates[0] + HT_gates[0])
+    r_t = relay.sigmoid(XT_gates[1] + HT_gates[1])
+    e_t = relay.tanh(r_t * HT_gates[2] + XT_gates[2])
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
     return u_t * HT_gates[0] + (relay.expr.const(1.0, dtype=dtype) - u_t) * e_t
 
 gru_0_W_X = relay.var("gru_0_W_X", shape=(3 * rnn_dims, rnn_dims), dtype=dtype)
@@ -161,7 +170,11 @@ def tune():
                     min_repeat_ms=1000,
                     timeout=100)
             )
+<<<<<<< HEAD
             log_filename = "synthesis_autotvm_skl.log"
+=======
+            log_filename = "synthesis_autotvm_skl_raw.log"
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
             tuner_obj.tune(
                 n_trial=min(n_trial, len(tsk.config_space)),
                 early_stopping=early_stopping,
@@ -171,6 +184,7 @@ def tune():
                     autotvm.callback.log_to_file(log_filename)
                 ])
 
+<<<<<<< HEAD
 if 0:
     tune()
     import sys
@@ -178,6 +192,15 @@ if 0:
 
 
 with autotvm.apply_history_best("synthesis_autotvm_skl.best_2.log"):
+=======
+if 1:
+    tune()
+    # import sys
+    # sys.exit()
+
+
+with autotvm.apply_history_best("synthesis_autotvm_skl_raw.log"):
+>>>>>>> 7d9c0d5fba1f9be9d21d31e0613ce87ceaee0fef
     with relay.build_config(opt_level=3):
         func = relay.optimize(func, target=skl_target, params=params)
         print(func.astext(show_meta_data=False))
