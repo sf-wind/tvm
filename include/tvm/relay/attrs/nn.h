@@ -352,6 +352,7 @@ struct SparseDenseStructureAttrs : public tvm::AttrsNode<SparseDenseStructureAtt
 /*! \brief Attributes for dense operator */
 struct SparseDenseStructure2Attrs : public tvm::AttrsNode<SparseDenseStructure2Attrs> {
   TVM_DECLARE_ATTRS(SparseDenseStructure2Attrs, "relay.attrs.SparseDenseStructure2Attrs") {}
+};
 
 struct GRUGatesAttrs : public tvm::AttrsNode<GRUGatesAttrs> {
   TVM_DECLARE_ATTRS(GRUGatesAttrs, "relay.attrs.GRUGatesAttrs") {}
