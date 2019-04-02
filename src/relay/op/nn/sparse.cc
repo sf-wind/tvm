@@ -144,17 +144,17 @@ bool SparseDenseStructureRel(const Array<Type>& types, int num_inputs, const Att
 Expr MakeSparseDenseStructure(Expr data, Expr weight_data, Expr weight_indices,
                               Expr weight_indptr) {
   auto attrs = make_node<SparseDenseStructureAttrs>();
-  static const Op& op = Op::Get("nn.sparse_dense_structure");
+  static const Op& op = Op::Get("nn.sparse_dense_kmnk");
   return CallNode::make(op, {data, weight_data, weight_indices, weight_indptr,
                              }, Attrs(attrs), {});
 }
 
-TVM_REGISTER_API("relay.op.nn._make.sparse_dense_structure")
+TVM_REGISTER_API("relay.op.nn._make.sparse_dense_kmnk")
     .set_body([](const TVMArgs& args, TVMRetValue* rv) {
       runtime::detail::unpack_call<Expr, 4>(MakeSparseDenseStructure, args, rv);
     });
 
-RELAY_REGISTER_OP("nn.sparse_dense_structure")
+RELAY_REGISTER_OP("nn.sparse_dense_kmnk")
     .describe(R"code(Applies a sparse linear transformation: :math:`Y = XW^T` with X sparse.
 
 - **data**: `(x1, x2, ..., xn, input_dim)`
@@ -193,17 +193,17 @@ bool SparseDenseStructure2Rel(const Array<Type>& types, int num_inputs, const At
 Expr MakeSparseDenseStructure2(Expr data, Expr weight_data, Expr weight_indices,
                               Expr weight_indptr) {
   auto attrs = make_node<SparseDenseStructure2Attrs>();
-  static const Op& op = Op::Get("nn.sparse_dense_structure2");
+  static const Op& op = Op::Get("nn.sparse_dense_mknk");
   return CallNode::make(op, {data, weight_data, weight_indices, weight_indptr,
                              }, Attrs(attrs), {});
 }
 
-TVM_REGISTER_API("relay.op.nn._make.sparse_dense_structure2")
+TVM_REGISTER_API("relay.op.nn._make.sparse_dense_mknk")
     .set_body([](const TVMArgs& args, TVMRetValue* rv) {
       runtime::detail::unpack_call<Expr, 4>(MakeSparseDenseStructure2, args, rv);
     });
 
-RELAY_REGISTER_OP("nn.sparse_dense_structure2")
+RELAY_REGISTER_OP("nn.sparse_dense_mknk")
     .describe(R"code(Applies a sparse linear transformation: :math:`Y = XW^T` with X sparse.
 
 - **data**: `(x1, x2, ..., xn, input_dim)`

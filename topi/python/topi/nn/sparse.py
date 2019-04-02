@@ -95,7 +95,7 @@ def sparse_dense2(data, weight_data, weight_indices, weight_indptr):
 
 
 @tvm.target.generic_func
-def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
+def sparse_dense_kmnk(data, weight_data, weight_indices, weight_indptr):
     import topi
     (K, M) = topi.util.get_const_tuple(data.shape)
     (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
@@ -120,8 +120,8 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
             weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
 
             return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
-        return tvm.compute(oshape, f, name="sparse_dense_structure_vm",
-                           tag="sparse_dense_structure_vm")
+        return tvm.compute(oshape, f, name="sparse_dense_kmnk_vm",
+                           tag="sparse_dense_kmnk_vm")
     '''
     def f(nb, r, i):
         row_start = weight_indptr[nb]
@@ -133,13 +133,13 @@ def sparse_dense_structure(data, weight_data, weight_indices, weight_indptr):
         weight_val = data[weight_indices[elem] * BS_C + bs_c, i]
         return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
     Y = tvm.compute((NB, BS_R, M), f,
-        name="sparse_dense_structure_block",
-        tag = "sparse_dense_structure_block")
+        name="sparse_dense_kmnk_block",
+        tag = "sparse_dense_kmnk_block")
     return tvm.compute(oshape, lambda n, m: Y[n // BS_R, n % BS_R, m],
-        name="sparse_dense_structure", tag="sparse_dense_structure")
+        name="sparse_dense_kmnk", tag="sparse_dense_kmnk")
 
 @tvm.target.generic_func
-def sparse_dense_structure2(data, weight_data, weight_indices, weight_indptr):
+def sparse_dense_mknk(data, weight_data, weight_indices, weight_indptr):
     import topi
     # assert topi.util.get_const_tuple(data.shape)[0] == 1
     # import pdb; pdb.set_trace()
@@ -159,8 +159,8 @@ def sparse_dense_structure2(data, weight_data, weight_indices, weight_indptr):
         a_val = weight_data[elem, sidx].astype("float32")
         weight_val = data[weight_indices[elem], sidx, i]
         return tvm.sum(a_val * weight_val, axis=[elem_idx, sidx])
-    return tvm.compute(oshape, f, name="sparse_dense_structure2",
-                       tag="sparse_dense_structure2")
+    return tvm.compute(oshape, f, name="sparse_dense_mknk",
+                       tag="sparse_dense_mknk")
 
 @tvm.target.generic_func
 def gru_gates(input_transform, hidden_transform):

@@ -801,12 +801,12 @@ def sparse_dense(data, weight):
 def sparse_dense2(data, weight):
     return _make.sparse_dense2(data, weight.data, weight.indices, weight.indptr)
 
-def sparse_dense_structure(data, weight):
-    return _make.sparse_dense_structure(data, weight.data, weight.indices,
+def sparse_dense_kmnk(data, weight):
+    return _make.sparse_dense_kmnk(data, weight.data, weight.indices,
                                         weight.indptr)
 
-def sparse_dense_structure2(data, weight):
-    return _make.sparse_dense_structure2(data, weight.data, weight.indices,
+def sparse_dense_mknk(data, weight):
+    return _make.sparse_dense_mknk(data, weight.data, weight.indices,
                                         weight.indptr)
 
 def sparse_dense(data, weight):

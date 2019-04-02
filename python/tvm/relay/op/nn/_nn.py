@@ -101,35 +101,35 @@ def schedule_sparse_dense2(attrs, outputs, target):
 
 reg.register_pattern("nn.sparse_dense2", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
-# sparse_dense_structure
-@reg.register_compute("nn.sparse_dense_structure")
-def compute_sparse_dense_structure(attrs, inputs, out_type, target):
-    """Compute definition of sparse_dense_structure"""
-    return [topi.nn.sparse_dense_structure(inputs[0], inputs[1], inputs[2],
+# sparse_dense_kmnk
+@reg.register_compute("nn.sparse_dense_kmnk")
+def compute_sparse_dense_kmnk(attrs, inputs, out_type, target):
+    """Compute definition of sparse_dense_kmnk"""
+    return [topi.nn.sparse_dense_kmnk(inputs[0], inputs[1], inputs[2],
                                            inputs[3])]
 
-@reg.register_schedule("nn.sparse_dense_structure")
-def schedule_sparse_dense_structure(attrs, outputs, target):
+@reg.register_schedule("nn.sparse_dense_kmnk")
+def schedule_sparse_dense_kmnk(attrs, outputs, target):
     """Schedule definition of batch_matmul"""
     with target:
-        return topi.generic.schedule_sparse_dense_structure(outputs)
+        return topi.generic.schedule_sparse_dense_kmnk(outputs)
 
-reg.register_pattern("nn.sparse_dense_structure", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+reg.register_pattern("nn.sparse_dense_kmnk", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
-# sparse_dense_structure2
-@reg.register_compute("nn.sparse_dense_structure2")
-def compute_sparse_dense_structure2(attrs, inputs, out_type, target):
-    """Compute definition of sparse_dense_structure2"""
-    return [topi.nn.sparse_dense_structure2(inputs[0], inputs[1], inputs[2],
+# sparse_dense_mknk
+@reg.register_compute("nn.sparse_dense_mknk")
+def compute_sparse_dense_mknk(attrs, inputs, out_type, target):
+    """Compute definition of sparse_dense_mknk"""
+    return [topi.nn.sparse_dense_mknk(inputs[0], inputs[1], inputs[2],
                                            inputs[3])]
 
-@reg.register_schedule("nn.sparse_dense_structure2")
-def schedule_sparse_dense_structure2(attrs, outputs, target):
+@reg.register_schedule("nn.sparse_dense_mknk")
+def schedule_sparse_dense_mknk(attrs, outputs, target):
     """Schedule definition of batch_matmul"""
     with target:
-        return topi.generic.schedule_sparse_dense_structure2(outputs)
+        return topi.generic.schedule_sparse_dense_mknk(outputs)
 
-reg.register_pattern("nn.sparse_dense_structure2", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+reg.register_pattern("nn.sparse_dense_mknk", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
 # sparse_dense
 @reg.register_compute("nn.gru_gates")

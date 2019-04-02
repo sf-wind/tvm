@@ -232,11 +232,11 @@ def schedule_sparse_dense2(outs):
     return _default_schedule(outs, False)
 
 @tvm.target.generic_func
-def schedule_sparse_dense_structure(outs):
+def schedule_sparse_dense_kmnk(outs):
     return _default_schedule(outs, False)
 
 @tvm.target.generic_func
-def schedule_sparse_dense_structure2(outs):
+def schedule_sparse_dense_mknk(outs):
     return _default_schedule(outs, False)
 
 @tvm.target.generic_func

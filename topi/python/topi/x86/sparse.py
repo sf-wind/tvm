@@ -66,15 +66,15 @@ def schedule_sparse_dense2(outs):
     return s
 
 
-@generic.schedule_sparse_dense_structure.register(["cpu"])
-def schedule_sparse_dense_structure(outs):
+@generic.schedule_sparse_dense_kmnk.register(["cpu"])
+def schedule_sparse_dense_kmnk(outs):
     s = tvm.create_schedule([x.op for x in outs])
     # import pdb; pdb.set_trace()
-    if "sparse_dense_structure" not in outs[0].op.tag:
+    if "sparse_dense_kmnk" not in outs[0].op.tag:
         # import pdb; pdb.set_trace()
         def callback(op):
             # import pdb; pdb.set_trace()
-            if "sparse_dense_structure" in op.tag:
+            if "sparse_dense_kmnk" in op.tag:
                 '''
                 (n, vi) = s[op].op.axis
                 (elem_idx, bs_c) = s[op].op.reduce_axis
@@ -91,7 +91,7 @@ def schedule_sparse_dense_structure(outs):
                 I = get_const_int(op_o.shape[1])
                 Y = op.input_tensors[0]
                 Y_op = s[Y].op
-                assert Y_op.tag == "sparse_dense_structure_block"
+                assert Y_op.tag == "sparse_dense_kmnk_block"
                 (nb, r, i) = Y_op.axis
                 (elem_idx, bs_c) = Y_op.reduce_axis
                 BS_R = get_const_int(Y.shape[1])
@@ -200,15 +200,15 @@ def schedule_sparse_dense_structure(outs):
 
 
 
-@generic.schedule_sparse_dense_structure2.register(["cpu"])
-def schedule_sparse_dense_structure2(outs):
+@generic.schedule_sparse_dense_mknk.register(["cpu"])
+def schedule_sparse_dense_mknk(outs):
     s = tvm.create_schedule([x.op for x in outs])
     # import pdb; pdb.set_trace()
-    if "sparse_dense_structure2" not in outs[0].op.tag:
+    if "sparse_dense_mknk" not in outs[0].op.tag:
         # import pdb; pdb.set_trace()
         def callback(op):
             # import pdb; pdb.set_trace()
-            if "sparse_dense_structure2" in op.tag:
+            if "sparse_dense_mknk" in op.tag:
                 (n, vi) = s[op].op.axis
                 (elem_idx, sidx) = s[op].op.reduce_axis
                 # s[op].unroll(sidx)

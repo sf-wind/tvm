@@ -270,11 +270,11 @@ for i in range(5):
     print("TVM time: ", prof_res.mean)
 
 
-print("\nsparse_dense_structure (bsr)")
+print("\nsparse_dense_kmnk (bsr)")
 x = relay.var("x", shape=[K, M], dtype=dtype)
 fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
 zero = relay.var("zero", shape=(N, M), dtype=dtype)
-outputs = relay.add(relay.nn.sparse_dense_structure(x, fc_0_W), zero)
+outputs = relay.add(relay.nn.sparse_dense_kmnk(x, fc_0_W), zero)
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 # print(func.astext(show_meta_data=False))
