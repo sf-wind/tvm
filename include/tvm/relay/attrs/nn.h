@@ -345,13 +345,18 @@ struct SparseDense2Attrs : public tvm::AttrsNode<SparseDense2Attrs> {
 };
 
 /*! \brief Attributes for dense operator */
-struct SparseDenseStructureAttrs : public tvm::AttrsNode<SparseDenseStructureAttrs> {
-  TVM_DECLARE_ATTRS(SparseDenseStructureAttrs, "relay.attrs.SparseDenseStructureAttrs") {}
+struct SparseDenseStructureKMNKAttrs : public tvm::AttrsNode<SparseDenseStructureKMNKAttrs> {
+  TVM_DECLARE_ATTRS(SparseDenseStructureKMNKAttrs, "relay.attrs.SparseDenseStructureKMNKAttrs") {}
 };
 
 /*! \brief Attributes for dense operator */
-struct SparseDenseStructure2Attrs : public tvm::AttrsNode<SparseDenseStructure2Attrs> {
-  TVM_DECLARE_ATTRS(SparseDenseStructure2Attrs, "relay.attrs.SparseDenseStructure2Attrs") {}
+struct SparseDenseStructureMKNKAttrs : public tvm::AttrsNode<SparseDenseStructureMKNKAttrs> {
+  TVM_DECLARE_ATTRS(SparseDenseStructureMKNKAttrs, "relay.attrs.SparseDenseStructureMKNKAttrs") {}
+};
+
+/*! \brief Attributes for dense operator */
+struct SDenseAttrs : public tvm::AttrsNode<SDenseAttrs> {
+  TVM_DECLARE_ATTRS(SDenseAttrs, "relay.attrs.SDenseAttrs") {}
 };
 
 struct GRUGatesAttrs : public tvm::AttrsNode<GRUGatesAttrs> {

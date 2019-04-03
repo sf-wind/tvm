@@ -131,6 +131,21 @@ def schedule_sparse_dense_mknk(attrs, outputs, target):
 
 reg.register_pattern("nn.sparse_dense_mknk", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
+# sdense
+@reg.register_compute("nn.sdense")
+def compute_sdense(attrs, inputs, out_type, target):
+    """Compute definition of sdense"""
+    return [topi.nn.sdense(inputs[0], inputs[1], inputs[2],
+                                           inputs[3])]
+
+@reg.register_schedule("nn.sdense")
+def schedule_sdense(attrs, outputs, target):
+    """Schedule definition of batch_matmul"""
+    with target:
+        return topi.generic.schedule_sdense(outputs)
+
+reg.register_pattern("nn.sdense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
 # sparse_dense
 @reg.register_compute("nn.gru_gates")
 def compute_gru_gates(attrs, inputs, out_type, target):

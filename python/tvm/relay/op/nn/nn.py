@@ -809,6 +809,9 @@ def sparse_dense_mknk(data, weight):
     return _make.sparse_dense_mknk(data, weight.data, weight.indices,
                                         weight.indptr)
 
+def sdense(data, weight):
+    return _make.sdense(data, weight.data, weight.indices,
+                                        weight.indptr)
 def sparse_dense(data, weight):
     return _make.sparse_dense(data, weight.data, weight.indices, weight.indptr)
 

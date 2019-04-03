@@ -1,6 +1,75 @@
 from .. import generic, nn, tag
 from ..util import traverse_inline, get_const_int
 import tvm
+from tvm import autotvm
+
+@autotvm.register_topi_compute(nn.sdense, 'cpu', ['direct'])
+def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
+                 data_layout="NI", kernel_layout="OI", out_layout=""):
+
+    if data_layout == "NI" and kernel_layout == "OI":
+        return sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr)
+    else:
+        assert False
+
+def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
+    import topi
+    (M, K) = topi.util.get_const_tuple(data.shape)
+    (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
+    (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
+    NB = NB_plus_1 - 1
+    oshape = (M, NB * BS_R)
+    assert weight_indices.dtype == "int32", weight_indices.dtype
+    assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    assert K % BS_C == 0
+    X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
+    # bs_r = tvm.reduce_axis((0, weight_data.shape[1]), name="bs_r")
+    bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
+    def f(i, nb, r):
+        row_start = weight_indptr[nb]
+        row_end = weight_indptr[nb + 1]
+        row_elems = row_end - row_start
+        elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+        elem = row_start + elem_idx
+        a_val = weight_data[elem, r, bs_c].astype("float32")
+        weight_val = X[i, weight_indices[elem], bs_c]
+        return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
+    Y = tvm.compute((M, NB, BS_R), f,
+        name="sdense_kmnk_block",
+        tag = "sdense_kmnk_block")
+    return tvm.compute(oshape, lambda m, n: Y[m, n // BS_R, n % BS_R],
+        name="sdense_mknk", tag="sdense_mknk")
+
+@autotvm.register_topi_schedule(generic.schedule_sdense, 'cpu', ['direct'])
+def schedule_sdense(cfg, outs):
+    outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
+    s = tvm.create_schedule([x.op for x in outs])
+
+    def _callback(op):
+        if op.tag == 'sdense_mknk':
+            schedule_sdense_mknk(s, cfg, op, outs[0].op)
+    traverse_inline(s, outs[0].op, _callback)
+    return s
+
+def schedule_sdense_mknk(s, cfg, op, out):
+    # import pdb; pdb.set_trace()
+    op_o = op.output(0)
+    Y = op.input_tensors[0]
+    Y_op = s[Y].op
+    assert Y_op.tag == "sparse_dense_kmnk_block"
+    (i, nb, r) = Y_op.axis
+    (elem_idx, bs_c) = Y_op.reduce_axis
+    I = get_const_int(op_o.shape[0])
+    BS_C = get_const_int(bs_c.dom.extent)
+    BS_R = get_const_int(Y.shape[2])
+    s[Y_op].reorder(nb, elem_idx, bs_c, r, i)
+
+    if op != out:
+        (yo, yi) = s[out].split(s[out].op.axis[0], 32)
+        s[op_o].compute_at(s[out], yo)
+        s[Y].compute_at(s[out], yo)
+        s[out].vectorize(yi)
+
 
 @generic.schedule_sparse_dense.register(["cpu"])
 def schedule_sparse_dense(outs):
@@ -70,123 +139,121 @@ def schedule_sparse_dense2(outs):
 def schedule_sparse_dense_kmnk(outs):
     s = tvm.create_schedule([x.op for x in outs])
     # import pdb; pdb.set_trace()
-    if "sparse_dense_kmnk" not in outs[0].op.tag:
+    def callback(op):
         # import pdb; pdb.set_trace()
-        def callback(op):
-            # import pdb; pdb.set_trace()
-            if "sparse_dense_kmnk" in op.tag:
-                '''
-                (n, vi) = s[op].op.axis
-                (elem_idx, bs_c) = s[op].op.reduce_axis
-                s[op].unroll(bs_c)
-                s[op].vectorize(vi)
-                # (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
-                # s[op].compute_at(s[outs[0]], yo)
-                # s[outs[0].op].vectorize(yi)
-                # s[op].parallel(n)
-                '''
+        if "sparse_dense_kmnk" in op.tag:
+            '''
+            (n, vi) = s[op].op.axis
+            (elem_idx, bs_c) = s[op].op.reduce_axis
+            s[op].unroll(bs_c)
+            s[op].vectorize(vi)
+            # (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
+            # s[op].compute_at(s[outs[0]], yo)
+            # s[outs[0].op].vectorize(yi)
+            # s[op].parallel(n)
+            '''
 
-                #import pdb; pdb.set_trace()
-                op_o = op.output(0)
-                I = get_const_int(op_o.shape[1])
-                Y = op.input_tensors[0]
-                Y_op = s[Y].op
-                assert Y_op.tag == "sparse_dense_kmnk_block"
-                (nb, r, i) = Y_op.axis
-                (elem_idx, bs_c) = Y_op.reduce_axis
-                BS_R = get_const_int(Y.shape[1])
-                # (nbo, nbi) = s[Y_op].split(nb, 8)
-                # CC = s.cache_write(Y, 'global')
-                # s[CC].compute_at(s[Y], nb)
-                s[Y_op].reorder(nb, elem_idx, bs_c, r, i)
-                BS_C = get_const_int(bs_c.dom.extent)
-                BF = None
-                if (I >= BS_C) and (I >= BS_R):
-                    # bsci = s[Y_op].fuse(bs_c, i)
-                    s[Y_op].vectorize(i)
+            #import pdb; pdb.set_trace()
+            op_o = op.output(0)
+            I = get_const_int(op_o.shape[1])
+            Y = op.input_tensors[0]
+            Y_op = s[Y].op
+            assert Y_op.tag == "sparse_dense_kmnk_block"
+            (nb, r, i) = Y_op.axis
+            (elem_idx, bs_c) = Y_op.reduce_axis
+            BS_R = get_const_int(Y.shape[1])
+            # (nbo, nbi) = s[Y_op].split(nb, 8)
+            # CC = s.cache_write(Y, 'global')
+            # s[CC].compute_at(s[Y], nb)
+            s[Y_op].reorder(nb, elem_idx, bs_c, r, i)
+            BS_C = get_const_int(bs_c.dom.extent)
+            BF = None
+            if (I >= BS_C) and (I >= BS_R):
+                # bsci = s[Y_op].fuse(bs_c, i)
+                s[Y_op].vectorize(i)
+            else:
+                bsc_axis = 1
+                if BS_C > BS_R and BS_C > I:
+                    bsc_axis = 3
+                elif BS_C > BS_R:
+                    bsc_axis = 2
                 else:
                     bsc_axis = 1
-                    if BS_C > BS_R and BS_C > I:
-                        bsc_axis = 3
-                    elif BS_C > BS_R:
-                        bsc_axis = 2
-                    else:
-                        bsc_axis = 1
 
-                    BF = s.rfactor(Y, bs_c, factor_axis=bsc_axis)
-                    (fnb, x2, x1, x0) = BF.op.axis
-                    (felem_idx,) = BF.op.reduce_axis
-                    lx0 = get_const_int(x0.dom.extent)
-                    lx1 = get_const_int(x1.dom.extent)
-                    lx2 = get_const_int(x2.dom.extent)
-                    if lx0 >= lx1 and lx0 >= lx2:
-                        xx0 = x0
-                        if lx1 >= lx2:
-                            xx1 = x1
-                            xx2 = x2
-                        else:
-                            xx1 = x2
-                            xx2 = x1
-                    elif lx1 >= lx2:
-                        xx0 = x1
-                        if lx0 >= lx2:
-                            xx1 = x0
-                            xx2 = x2
-                        else:
-                            xx1 = x2
-                            xx2 = x0
+                BF = s.rfactor(Y, bs_c, factor_axis=bsc_axis)
+                (fnb, x2, x1, x0) = BF.op.axis
+                (felem_idx,) = BF.op.reduce_axis
+                lx0 = get_const_int(x0.dom.extent)
+                lx1 = get_const_int(x1.dom.extent)
+                lx2 = get_const_int(x2.dom.extent)
+                if lx0 >= lx1 and lx0 >= lx2:
+                    xx0 = x0
+                    if lx1 >= lx2:
+                        xx1 = x1
+                        xx2 = x2
                     else:
-                        xx0 = x2
-                        if lx0 >= lx1:
-                            xx1 = x0
-                            xx2 = x1
-                        else:
-                            xx1 = x1
-                            xx2 = x0
-                    lxx0 = get_const_int(xx0.dom.extent)
-                    if lxx0 >= 16:
-                        # xx0 has enough parallelism
-                        # for m = 2, bs_r = 16, bs_c = 1
-                        s[BF].reorder(fnb, xx2, xx1, felem_idx, xx0)
-                        s[BF].vectorize(xx0)
+                        xx1 = x2
+                        xx2 = x1
+                elif lx1 >= lx2:
+                    xx0 = x1
+                    if lx0 >= lx2:
+                        xx1 = x0
+                        xx2 = x2
                     else:
-                        # for m = 2, bs_r = 8, bs_c = 1
-                        s[BF].reorder(fnb, xx2, felem_idx, xx1, xx0)
-                    # s[BF].vectorize(xx0)
+                        xx1 = x2
+                        xx2 = x0
+                else:
+                    xx0 = x2
+                    if lx0 >= lx1:
+                        xx1 = x0
+                        xx2 = x1
+                    else:
+                        xx1 = x1
+                        xx2 = x0
+                lxx0 = get_const_int(xx0.dom.extent)
+                if lxx0 >= 16:
+                    # xx0 has enough parallelism
+                    # for m = 2, bs_r = 16, bs_c = 1
+                    s[BF].reorder(fnb, xx2, xx1, felem_idx, xx0)
+                    s[BF].vectorize(xx0)
+                else:
+                    # for m = 2, bs_r = 8, bs_c = 1
+                    s[BF].reorder(fnb, xx2, felem_idx, xx1, xx0)
+                # s[BF].vectorize(xx0)
 
-                    '''
-                    do not fuse explicitly, rely on compiler to do it.
-                    fri = s[BF].fuse(fbsc, fi)
-                    frri = s[BF].fuse(fri, fr)
-                    s[BF].vectorize(frri)
-                    '''
-                    # s[BF].vectorize(fri)
-                    # BS_R = get_const_int(r.dom.extent)
-                    # (n, m) = op.axis
-                    # (no, ni) = s[op].split(n, 8)
-                    # M = get_const_int(m.dom.extent)
-                    ### s[BF].compute_at(s[Y], s[Y].op.axis[0])
-                    # import pdb; pdb.set_trace()
-                    '''
-                    FR = get_const_int(fr.dom.extent)
-                    FBSC = get_const_int(fbsc.dom.extent)
-                    if FR >= FBSC:
-                        s[BF].vectorize(fr)
-                    else:
-                        s[BF].vectorize(fbsc)
-                    '''
+                '''
+                do not fuse explicitly, rely on compiler to do it.
+                fri = s[BF].fuse(fbsc, fi)
+                frri = s[BF].fuse(fri, fr)
+                s[BF].vectorize(frri)
+                '''
+                # s[BF].vectorize(fri)
+                # BS_R = get_const_int(r.dom.extent)
                 # (n, m) = op.axis
-                op_o = op.output(0)
+                # (no, ni) = s[op].split(n, 8)
+                # M = get_const_int(m.dom.extent)
+                ### s[BF].compute_at(s[Y], s[Y].op.axis[0])
                 # import pdb; pdb.set_trace()
-                if op != s[outs[0]].op:
-                    (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[0], 32)
-                    s[op_o].compute_at(s[outs[0]], yo)
-                    s[Y].compute_at(s[outs[0]], yo)
-                    if BF is not None:
-                        s[BF].compute_at(s[outs[0]], yo)
-                    s[outs[0].op].vectorize(yi)
+                '''
+                FR = get_const_int(fr.dom.extent)
+                FBSC = get_const_int(fbsc.dom.extent)
+                if FR >= FBSC:
+                    s[BF].vectorize(fr)
+                else:
+                    s[BF].vectorize(fbsc)
+                '''
+            # (n, m) = op.axis
+            op_o = op.output(0)
+            # import pdb; pdb.set_trace()
+            if op != s[outs[0]].op:
+                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[0], 32)
+                s[op_o].compute_at(s[outs[0]], yo)
+                s[Y].compute_at(s[outs[0]], yo)
+                if BF is not None:
+                    s[BF].compute_at(s[outs[0]], yo)
+                s[outs[0].op].vectorize(yi)
 
-        traverse_inline(s, outs[0].op, callback)
+    traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()
     # C = outs[0]
     # A1, A2, A3, A4 = C.op.input_tensors
@@ -203,21 +270,27 @@ def schedule_sparse_dense_kmnk(outs):
 @generic.schedule_sparse_dense_mknk.register(["cpu"])
 def schedule_sparse_dense_mknk(outs):
     s = tvm.create_schedule([x.op for x in outs])
-    # import pdb; pdb.set_trace()
-    if "sparse_dense_mknk" not in outs[0].op.tag:
-        # import pdb; pdb.set_trace()
-        def callback(op):
+    def callback(op):
+        if "sparse_dense_mknk" in op.tag:
             # import pdb; pdb.set_trace()
-            if "sparse_dense_mknk" in op.tag:
-                (n, vi) = s[op].op.axis
-                (elem_idx, sidx) = s[op].op.reduce_axis
-                # s[op].unroll(sidx)
-                s[op].vectorize(vi)
-                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[1], 8)
-                s[op].compute_at(s[outs[0]], yo)
+            op_o = op.output(0)
+            Y = op.input_tensors[0]
+            Y_op = s[Y].op
+            assert Y_op.tag == "sparse_dense_kmnk_block"
+            (i, nb, r) = Y_op.axis
+            (elem_idx, bs_c) = Y_op.reduce_axis
+            I = get_const_int(op_o.shape[0])
+            BS_C = get_const_int(bs_c.dom.extent)
+            BS_R = get_const_int(Y.shape[2])
+            s[Y_op].reorder(nb, elem_idx, bs_c, r, i)
+
+            if op != s[outs[0]].op:
+                (yo, yi) = s[outs[0].op].split(s[outs[0].op].op.axis[0], 32)
+                s[op_o].compute_at(s[outs[0]], yo)
+                s[Y].compute_at(s[outs[0]], yo)
                 s[outs[0].op].vectorize(yi)
-                # s[op].parallel(n)
-        traverse_inline(s, outs[0].op, callback)
+
+    traverse_inline(s, outs[0].op, callback)
     # import pdb; pdb.set_trace()
     # C = outs[0]
     # A1, A2, A3, A4 = C.op.input_tensors
@@ -227,5 +300,4 @@ def schedule_sparse_dense_mknk(outs):
     # A1, A2, A3, A4 = A.op.input_tensors
     # print(tvm.lower(s, [A1, A2, A3, A4, B, C], simple_mode=True))
 
-    traverse_inline(s, outs[0].op, callback)
     return s

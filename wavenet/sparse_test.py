@@ -323,3 +323,58 @@ ftimer = module.module.time_evaluator("run", ctx, 100)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
+
+
+print("\nsparse_dense_mknk (bsr)")
+x = relay.var("x", shape=[M, K], dtype=dtype)
+fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
+zero = relay.var("zero", shape=(M, N), dtype=dtype)
+outputs = relay.add(relay.nn.sparse_dense_mknk(x, fc_0_W), zero)
+
+func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+# print(func.astext(show_meta_data=False))
+relay.ir_pass.infer_type(func)
+# print(func.astext(show_meta_data=False))
+
+param_vars = [
+    fc_0_W, zero
+]
+input_vars = [x]
+
+params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
+inputs = collections.OrderedDict(
+    [(
+        param.name_hint,
+        tvm.nd.array(a.asnumpy(), ctx)
+    ) for param in input_vars])
+with relay.build_config(opt_level=3):
+    func = relay.optimize(func, target=skl_target, params=params)
+    # print(func.astext(show_meta_data=False))
+    func = relay.ir_pass.infer_type(func)
+    graph, lib, new_params = relay.build_module.build(
+        func, target=skl_target,  params=params)
+    # print(func.astext(show_meta_data=False))
+    # print(lib.get_source('asm'))
+    # print(lib.get_source())
+    '''
+    print(lib.get_source('asm'))
+    for (k, v) in params.items():
+        print(k, v.shape)
+    for (k, v) in new_params.items():
+        print(k, v.shape)
+    '''
+
+r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
+r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
+module = graph_runtime.create(graph, lib, ctx)
+module.set_input(**r_new_params)
+module.set_input(**r_inputs)
+module.run()
+ro = tvm.nd.empty([M, N])
+module.get_output(0, ro)
+tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
+
+ftimer = module.module.time_evaluator("run", ctx, 100)
+for i in range(5):
+    prof_res = ftimer()
+    print("TVM time: ", prof_res.mean)
