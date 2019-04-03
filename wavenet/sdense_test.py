@@ -115,11 +115,11 @@ def instantiate(param):
         ]
 
 
-print("\nsparse_dense_mknk (bsr)")
+print("\sdense")
 x = relay.var("x", shape=[M, K], dtype=dtype)
 fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
 zero = relay.var("zero", shape=(M, N), dtype=dtype)
-outputs = relay.add(relay.nn.sparse_dense_mknk(x, fc_0_W), zero)
+outputs = relay.add(relay.nn.sdense(x, fc_0_W), zero)
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 # print(func.astext(show_meta_data=False))

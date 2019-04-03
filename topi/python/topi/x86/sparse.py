@@ -56,7 +56,7 @@ def schedule_sdense_mknk(s, cfg, op, out):
     op_o = op.output(0)
     Y = op.input_tensors[0]
     Y_op = s[Y].op
-    assert Y_op.tag == "sparse_dense_kmnk_block"
+    assert Y_op.tag == "sdense_kmnk_block"
     (i, nb, r) = Y_op.axis
     (elem_idx, bs_c) = Y_op.reduce_axis
     I = get_const_int(op_o.shape[0])
