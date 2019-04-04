@@ -208,26 +208,62 @@ def gru_gates(input_transform, hidden_transform):
 
 
 def sdense_default(data, weight_data, weight_indices, weight_indptr):
-    import topi
-    # assert topi.util.get_const_tuple(data.shape)[0] == 1
-    oshape = (
-        topi.util.get_const_tuple(data.shape)[0],
-        topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
-    assert weight_indices.dtype == "int32", weight_indices.dtype
-    assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    if len(weight_data.shape) == 1:
+        import topi
+        # import pdb; pdb.set_trace()
+        # assert topi.util.get_const_tuple(data.shape)[0] == 1
 
-    def f(i, row):
-        assert row.dtype == "int32"
-        row_start = weight_indptr[row]
-        row_end = weight_indptr[row + 1]
-        row_elems = row_end - row_start
-        elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
-        elem = row_start + elem_idx
-        a_val = weight_data[elem].astype("float32")
-        weight_val = data[i, weight_indices[elem]]
-        return tvm.sum(a_val * weight_val, axis=elem_idx)
-    return tvm.compute(
-        oshape, f, name="sparse_dense", tag="sparse_dense_csrmv")
+        oshape = (
+            topi.util.get_const_tuple(data.shape)[0],
+            topi.util.get_const_tuple(weight_indptr.shape)[0] - 1)
+        assert weight_indices.dtype == "int32", weight_indices.dtype
+        assert weight_indptr.dtype == "int32", weight_indptr.dtype
+
+        def f(i, row):
+            # import pdb; pdb.set_trace()
+            assert row.dtype == "int32"
+            row_start = weight_indptr[row]
+            row_end = weight_indptr[row + 1]
+            row_elems = row_end - row_start
+            elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+            elem = row_start + elem_idx
+            offset = 0
+            if len(weight_data.shape) == 3:
+                # result incorrect
+                a_val = weight_data[elem, 0, 0].astype("float32")
+            else:
+                a_val = weight_data[elem].astype("float32")
+            weight_val = data[i, weight_indices[elem]]
+            return tvm.sum(a_val * weight_val, axis=elem_idx)
+        return tvm.compute(
+            oshape, f, name="sdense", tag="sdense_default")
+    elif len(weight_data.shape) == 3:
+        import topi
+        (M, K) = topi.util.get_const_tuple(data.shape)
+        (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
+        (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
+        NB = NB_plus_1 - 1
+        oshape = (M, NB * BS_R)
+        assert weight_indices.dtype == "int32", weight_indices.dtype
+        assert weight_indptr.dtype == "int32", weight_indptr.dtype
+        assert K % BS_C == 0
+        X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
+        # bs_r = tvm.reduce_axis((0, weight_data.shape[1]), name="bs_r")
+        bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
+        def f(i, nb, r):
+            row_start = weight_indptr[nb]
+            row_end = weight_indptr[nb + 1]
+            row_elems = row_end - row_start
+            elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+            elem = row_start + elem_idx
+            a_val = weight_data[elem, r, bs_c].astype("float32")
+            weight_val = X[i, weight_indices[elem], bs_c]
+            return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
+        Y = tvm.compute((M, NB, BS_R), f,
+            name="sparse_dense_kmnk_block",
+            tag = "sparse_dense_kmnk_block")
+        return tvm.compute(oshape, lambda m, n: Y[m, n // BS_R, n % BS_R],
+            name="sparse_dense_mknk", tag="sparse_dense_mknk")
 
 
 @tvm.target.override_native_generic_func("sdense")

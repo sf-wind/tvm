@@ -135,8 +135,7 @@ reg.register_pattern("nn.sparse_dense_mknk", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 @reg.register_compute("nn.sdense")
 def compute_sdense(attrs, inputs, out_type, target):
     """Compute definition of sdense"""
-    return [topi.nn.sdense(inputs[0], inputs[1], inputs[2],
-                                           inputs[3])]
+    return [topi.nn.sdense(inputs[0], inputs[1], inputs[2], inputs[3])]
 
 @reg.register_schedule("nn.sdense")
 def schedule_sdense(attrs, outputs, target):

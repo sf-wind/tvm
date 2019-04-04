@@ -14,6 +14,9 @@ import tempfile
 import logging
 import os
 import argparse
+import sys
+
+sys.settrace
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default='cpu')
@@ -34,11 +37,11 @@ if args.debug:
 else:
     import tvm.contrib.graph_runtime as graph_runtime
 
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 dtype = "float32"
 itype = 'int32'
 
-context = "llvm -mcpu=core-avx2 -target=x86_64-linux-gnu"
+context = "llvm -mcpu=core-avx2"
 skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
 
@@ -115,7 +118,7 @@ def instantiate(param):
         ]
 
 
-print("\sdense")
+print("sdense")
 x = relay.var("x", shape=[M, K], dtype=dtype)
 fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
 zero = relay.var("zero", shape=(M, N), dtype=dtype)
@@ -137,22 +140,62 @@ inputs = collections.OrderedDict(
         param.name_hint,
         tvm.nd.array(a.asnumpy(), ctx)
     ) for param in input_vars])
-with relay.build_config(opt_level=3):
-    func = relay.optimize(func, target=skl_target, params=params)
-    # print(func.astext(show_meta_data=False))
-    func = relay.ir_pass.infer_type(func)
-    graph, lib, new_params = relay.build_module.build(
-        func, target=skl_target,  params=params)
-    # print(func.astext(show_meta_data=False))
-    # print(lib.get_source('asm'))
-    # print(lib.get_source())
-    '''
-    print(lib.get_source('asm'))
-    for (k, v) in params.items():
-        print(k, v.shape)
-    for (k, v) in new_params.items():
-        print(k, v.shape)
-    '''
+
+def tune():
+    global func
+    with relay.build_config(opt_level=2):
+        func = relay.optimize(func, target=skl_target, params=params)
+        print(func.astext(show_meta_data=False))
+        # import pdb; pdb.set_trace()
+        tasks = autotvm.task.extract_from_program(
+            func, target=skl_target, params=params, ops=(relay.op.nn.sdense,))
+        for i, tsk in enumerate(tasks):
+            print(tsk)
+            prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
+
+            tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
+            n_trial = 100
+            early_stopping = 200
+            measure_option = autotvm.measure_option(
+                builder=autotvm.LocalBuilder(),
+                runner=autotvm.LocalRunner(number=10, repeat=1,
+                                           min_repeat_ms=1000),
+            )
+            log_filename = "synthesis_autotvm_skl.log"
+            tuner_obj.tune(
+                n_trial=min(n_trial, len(tsk.config_space)),
+                early_stopping=early_stopping,
+                measure_option=measure_option,
+                callbacks=[
+                    autotvm.callback.progress_bar(n_trial, prefix=prefix),
+                    autotvm.callback.log_to_file(log_filename)
+                ]
+            )
+
+if 0:
+    tune()
+    import sys
+    sys.exit()
+
+
+with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
+# if 1:
+    with relay.build_config(opt_level=3):
+        func = relay.optimize(func, target=skl_target, params=params)
+        # print(func.astext(show_meta_data=False))
+        func = relay.ir_pass.infer_type(func)
+        graph, lib, new_params = relay.build_module.build(
+            func, target=skl_target,  params=params)
+        # print(func.astext(show_meta_data=False))
+        # print(lib.get_source('asm'))
+        # print(lib.get_source())
+        '''
+        print(lib.get_source('asm'))
+        for (k, v) in params.items():
+            print(k, v.shape)
+        for (k, v) in new_params.items():
+            print(k, v.shape)
+        '''
 
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
 r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}

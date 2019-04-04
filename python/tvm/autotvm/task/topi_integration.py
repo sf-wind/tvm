@@ -69,6 +69,7 @@ class TaskExtractEnv:
             topi.nn.conv2d_transpose_nchw: "topi_nn_conv2d_transpose_nchw",
             topi.nn.dense: "topi_nn_dense",
             topi.nn.deformable_conv2d_nchw: "topi_nn_deformable_conv2d_nchw",
+            topi.nn.sdense: "topi_nn_sdense",
         }
 
         self.topi_to_schedule = {
@@ -79,6 +80,7 @@ class TaskExtractEnv:
             topi.nn.group_conv2d_nchw: [topi.generic.schedule_group_conv2d_nchw],
             topi.nn.conv2d_transpose_nchw: [topi.generic.schedule_conv2d_transpose_nchw],
             topi.nn.dense: [topi.generic.schedule_dense],
+            topi.nn.sdense: [topi.generic.schedule_sdense],
             topi.nn.deformable_conv2d_nchw: [topi.generic.schedule_deformable_conv2d_nchw],
         }
 
@@ -174,6 +176,16 @@ class TaskExtractEnv:
             if bias is not None:
                 return s, [data, weight, bias, C]
             return s, [data, weight, C]
+
+        @register("topi_nn_sdense")
+        def _topi_nn_sdense(*args, **kwargs):
+            assert not kwargs, "Do not support kwargs in template function call"
+            args = deserialize_args(args)
+            data, weight_data, weight_indices, weight_indptr = args[:4]
+            C = topi.nn.sdense(*args, **kwargs)
+
+            s = topi.generic.schedule_sdense([C])
+            return s, [data, weight_data, weight_indices, weight_indptr, C]
 
         @register("topi_nn_deformable_conv2d_nchw")
         def _topi_nn_deformable_conv2d_nchw(*args, **kwargs):
