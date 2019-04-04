@@ -28,6 +28,8 @@ parser.add_argument("--bs_r", type=int, default=0)
 parser.add_argument("--bs_c", type=int, default=0)
 parser.add_argument("--tuner", type=str, default="ga",
                     choices=["ga", "xgboost"])
+parser.add_argument("--target", type=str, default="core-avx2",
+                    choices=["core-avx2", "skylake-avx512"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -43,7 +45,7 @@ else:
 dtype = "float32"
 itype = 'int32'
 
-context = "llvm -mcpu=core-avx2"
+context = "llvm -mcpu=" + args.target
 skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
 

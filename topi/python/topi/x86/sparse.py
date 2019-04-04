@@ -14,6 +14,8 @@ def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
     else:
         assert False
 
+def tvm_from_bf16(x):
+    return tvm.call_pure_intrin("float32", "reinterpret", x.astype("uint32") << 16)
 
 def specify_range(cfg, prefix, num):
     for i in range(num):
@@ -35,6 +37,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     oshape = (M, NB * BS_R)
     assert weight_indices.dtype == "int32", weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    assert weight_data.dtype in ("float32", "uint16")
     NUM_AXIS = 4
     specify_range(cfg, 'axis_', NUM_AXIS)
     cfg.define_knob('rfactor_bs_c', [False, True])
@@ -60,12 +63,16 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
-        a_val = weight_data[elem, r, bs_c].astype("float32")
-        if cfg['align_data'].val:
-            weight_val = X[i, weight_indices[elem], bs_c]
+        weight_val = weight_data[elem, r, bs_c]
+        if weight_data.dtype == "uint16":
+            weight_val = tvm_from_bf16(weight_val)
         else:
-            weight_val = X[i, weight_indices[elem] * BS_C + bs_c]
-        return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
+            weight_val = weight_val.astype("float32")
+        if cfg['align_data'].val:
+            x_val = X[i, weight_indices[elem], bs_c]
+        else:
+            x_val = X[i, weight_indices[elem] * BS_C + bs_c]
+        return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
     Y = tvm.compute((M, NB, BS_R), f,
         name="sdense_kmnk_block",
         tag = "sdense_kmnk_block")
