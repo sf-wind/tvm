@@ -26,6 +26,8 @@ parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
 parser.add_argument("--bs_r", type=int, default=0)
 parser.add_argument("--bs_c", type=int, default=0)
+parser.add_argument("--tuner", type=str, default="ga",
+                    choices=["ga", "xgboost"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -159,8 +161,10 @@ def tune():
         for i, tsk in enumerate(tasks):
             print(tsk)
             prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
-
-            tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
+            if args.tuner == "xgboost":
+                tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
+            else:
+                tuner_obj = autotvm.tuner.GATuner(tsk, pop_size=50)
             n_trial = 100
             early_stopping = 200
             measure_option = autotvm.measure_option(
