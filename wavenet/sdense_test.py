@@ -62,7 +62,14 @@ print("\n\nmatrix: [{}, {}] * [{}, {}], BS_R: {}, BS_C: {}".format(M, K, K, N, B
 
 density = 0.04
 a = tvm.nd.array(np.random.rand(M, K).astype(dtype), ctx)
-mask = np.random.choice([0, 1], size=(N //BS_R, K // BS_C), p=[1-density, density])
+filename = str(N) + "_" + str(K) + "_" + str(BS_R) + "_" + str(BS_C) + ".npz"
+if os.path.isfile("mask_data/" + filename):
+    with open("mask_data/" + filename, "rb") as f:
+        mask = np.load(f)
+else:
+    mask = np.random.choice([0, 1], size=(N //BS_R, K // BS_C), p=[1-density, density])
+    with open("mask_data/" + filename, "wb") as f:
+        np.save(f, mask)
 mask = np.repeat(mask, BS_C, axis=1)
 mask = np.repeat(mask, BS_R, axis=0)
 bb = (np.random.rand(N, K).astype(dtype) * mask).astype(dtype)
@@ -172,7 +179,7 @@ def tune():
                 ]
             )
 
-if 0:
+if args.tune:
     tune()
     import sys
     sys.exit()

@@ -37,16 +37,16 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
     NUM_AXIS = 4
     specify_range(cfg, 'axis_', NUM_AXIS)
-    '''
     cfg.define_knob('rfactor_bs_c', [False, True])
     cfg.define_knob('align_data', [False, True] if len(data.shape) == 2 and BS_C > 1 and K > BS_C else [False])
     cfg.define_knob('vectorize_axis', range(-1, NUM_AXIS, 1))
     cfg.define_knob('parallel_axis', range(-1, NUM_AXIS, 1))
     '''
     cfg.define_knob('rfactor_bs_c', [False])
-    cfg.define_knob('align_data', [False] if len(data.shape) == 2 and BS_C > 1 and K > BS_C else [False])
+    cfg.define_knob('align_data', [False])
     cfg.define_knob('vectorize_axis', [-1])
     cfg.define_knob('parallel_axis', [-1])
+    '''
     if cfg['align_data'].val:
         X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
     else:
@@ -72,15 +72,17 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     O = tvm.compute(oshape, lambda m, n: Y[m, n // BS_R, n % BS_R],
         name="sdense_mknk", tag="sdense_mknk")
     if cfg.is_fallback:
-        _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB)
+        _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS)
     return O
 
 
-def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB):
+def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
     cfg["align_data"] = OtherOptionEntity(False)
     cfg["rfactor_bs_c"] = OtherOptionEntity(True)
-    for i in range(5):
-        cfg["axis_5_" + str(i)] = i
+    for i in range(NUM_AXIS):
+        cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
+    cfg["vectorize_axis"] = OtherOptionEntity(-1)
+    cfg["parallel_axis"] = OtherOptionEntity(-1)
 
 
 @autotvm.register_topi_schedule(generic.schedule_sdense, 'cpu', ['direct'])
@@ -101,7 +103,7 @@ def reorder_axes(cfg, prefix, axes):
     new_axes = [None] * num
     for i in range(num-1, -1, -1):
         name = prefix + str(num) + "_" + str(i)
-        assert name in cfg
+        assert name in cfg, name + " doesn't exist in cfg"
         idx = cfg[name].val
         count = 0
         for j in range(num):
