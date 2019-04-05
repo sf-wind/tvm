@@ -70,7 +70,7 @@ print("\n\nmatrix: [{}, {}] * [{}, {}], BS_R: {}, BS_C: {}".format(M, K, K, N, B
 
 density = 0.04
 a = tvm.nd.array(np.random.rand(M, K).astype(dtype), ctx)
-filename = str(N) + "_" + str(K) + "_" + str(BS_R) + "_" + str(BS_C) + ".npz"
+filename = str(M) + "_" + str(N) + "_" + str(K) + "_" + str(BS_R) + "_" + str(BS_C) + ".npz"
 if os.path.isfile("mask_data/" + filename):
     with open("mask_data/" + filename, "rb") as f:
         mask = np.load(f)
