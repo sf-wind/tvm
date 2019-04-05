@@ -44,6 +44,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     cfg.define_knob('align_data', [False, True] if len(data.shape) == 2 and BS_C > 1 and K > BS_C else [False])
     cfg.define_knob('vectorize_axis', range(-1, NUM_AXIS, 1))
     cfg.define_knob('parallel_axis', range(-1, NUM_AXIS, 1))
+    cfg.define_knob('unroll_axis', range(-1, NUM_AXIS, 1))
     '''
     cfg.define_knob('rfactor_bs_c', [False])
     cfg.define_knob('align_data', [False])
@@ -92,6 +93,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
         cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["unroll_axis"] = OtherOptionEntity(-1)
     elif M == 1 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
         cfg["rfactor_bs_c"] = OtherOptionEntity(False)
@@ -99,6 +101,17 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(2)
         cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["unroll_axis"] = OtherOptionEntity(-1)
+    elif M == 8 and BS_R >= 16 and BS_C == 1:
+        cfg["align_data"] = OtherOptionEntity(False)
+        cfg["rfactor_bs_c"] = OtherOptionEntity(False)
+        cfg["axis_4_0"] = OtherOptionEntity(0)
+        cfg["axis_4_1"] = OtherOptionEntity(1)
+        cfg["axis_4_2"] = OtherOptionEntity(2)
+        cfg["axis_4_3"] = OtherOptionEntity(2)
+        cfg["vectorize_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["unroll_axis"] = OtherOptionEntity(-1)
     else:
         cfg["align_data"] = OtherOptionEntity(False)
         cfg["rfactor_bs_c"] = OtherOptionEntity(True)
@@ -106,6 +119,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
         cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["unroll_axis"] = OtherOptionEntity(-1)
 
 
 @autotvm.register_topi_schedule(generic.schedule_sdense, 'cpu', ['direct'])
@@ -170,7 +184,9 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["parallel_axis"].val >= 0 and \
                 new_axis[cfg["parallel_axis"].val] != felem_idx:
             s[BF].parallel(new_axis[cfg["parallel_axis"].val])
-        # s[BF].compute_at(s[op_o], nb)
+        if cfg["unroll_axis"].val >= 0 and \
+                new_axis[cfg["unroll_axis"].val] != elem_idx:
+            s[BF].unroll(new_axis[cfg["unroll_axis"].val])
     else:
         # import pdb; pdb.set_trace()
         axes = [elem_idx, bs_c, r, i]
@@ -182,6 +198,9 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["parallel_axis"].val >= 0 and \
                 new_axis[cfg["parallel_axis"].val] != elem_idx:
             s[Y].parallel(new_axis[cfg["parallel_axis"].val])
+        if cfg["unroll_axis"].val >= 0 and \
+                new_axis[cfg["unroll_axis"].val] != elem_idx:
+            s[Y].unroll(new_axis[cfg["unroll_axis"].val])
     '''
     if op != out:
         (yo, yi) = s[out].split(s[out].op.axis[0], 32)
