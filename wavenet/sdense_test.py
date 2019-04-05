@@ -32,6 +32,8 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
+parser.add_argument("--wtype", type=str, default="float32",
+                    choices=["float32", "bfloat16"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -47,6 +49,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 np.random.seed(int(time.clock()))
 dtype = "float32"
+wdtype = "uint16" if args.wtype == "bfloat16" else "float32"
 itype = 'int32'
 
 context = "llvm -mcpu=" + args.target
@@ -57,8 +60,8 @@ M = args.m if args.m > 0 else 1
 N = 3072
 K = 1024
 '''
-N = 8
-K = 8
+N = 16
+K = 16
 '''
 BS_R = args.bs_r if args.bs_r > 0 else 1
 BS_C = args.bs_c if args.bs_c > 0 else 1
@@ -80,7 +83,10 @@ else:
         np.save(f, mask)
 mask = np.repeat(mask, BS_C, axis=1)
 mask = np.repeat(mask, BS_R, axis=0)
+
 bb = (np.random.rand(N, K).astype(dtype) * mask).astype(dtype)
+if wdtype == "uint16":
+    bb = (bb.view(dtype="uint32") >> 16).astype("uint16")
 bsr_m = bsr_matrix(bb, blocksize=(BS_R, BS_C))
 csr_m = bsr_m.tocsr(True)
 b = tvm.nd.array(bb, ctx)
@@ -88,7 +94,10 @@ num_nonzeros = np.count_nonzero(b.asnumpy())
 print("non zeros: {}".format(num_nonzeros))
 
 # baseline
-answer = np.dot(a.asnumpy(), np.transpose(b.asnumpy()))
+bbb = bb
+if wdtype == "uint16":
+    bbb = (bb.astype("uint32") << 16).view(dtype="float32")
+answer = np.dot(a.asnumpy(), np.transpose(bbb))
 
 import collections
 CSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'density'])
@@ -99,7 +108,7 @@ def to_csr(v, density=0.04):
     name = v.name_hint
     (N, K) = v.type_annotation.concrete_shape
     nnz = num_nonzeros
-    v_data = relay.var(name + "_data", shape=(nnz,), dtype=dtype)
+    v_data = relay.var(name + "_data", shape=(nnz,), dtype=wdtype)
     v_indices = relay.var(name + "_indices", shape=(nnz,), dtype="int32")
     v_indptr = relay.var(name + "_indptr", shape=(N + 1,), dtype="int32")
     return CSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, density=density)
@@ -109,7 +118,7 @@ def to_bsr(v, density=0.04):
     (N, K) = v.type_annotation.concrete_shape
     nnz = num_nonzeros
     num_blocks = int(nnz / (BS_R * BS_C)) + 1
-    v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=dtype)
+    v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=wdtype)
     v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype="int32")
     v_indptr = relay.var(name + "_indptr", shape=(N // BS_R + 1,), dtype="int32")
     return BSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, BS_R=BS_R, BS_C=BS_C, density=density)
@@ -118,13 +127,13 @@ def to_bsr(v, density=0.04):
 def instantiate(param):
     if isinstance(param, CSR):
         return [
-            (param.data.name_hint, tvm.nd.array(csr_m.data.astype("float32"), ctx)),
+            (param.data.name_hint, tvm.nd.array(csr_m.data.astype(wdtype), ctx)),
             (param.indices.name_hint, tvm.nd.array(csr_m.indices.astype("int32"), ctx)),
             (param.indptr.name_hint, tvm.nd.array(csr_m.indptr.astype("int32"), ctx)),
         ]
     elif isinstance(param, BSR):
         return [
-            (param.data.name_hint, tvm.nd.array(bsr_m.data.astype("float32"), ctx)),
+            (param.data.name_hint, tvm.nd.array(bsr_m.data.astype(wdtype), ctx)),
             (param.indices.name_hint, tvm.nd.array(bsr_m.indices.astype("int32"), ctx)),
             (param.indptr.name_hint, tvm.nd.array(bsr_m.indptr.astype("int32"), ctx)),
         ]
@@ -135,7 +144,7 @@ def instantiate(param):
 
 print("sdense")
 x = relay.var("x", shape=[M, K], dtype=dtype)
-fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
+fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=wdtype))
 # zero = relay.var("zero", shape=(M, N), dtype=dtype)
 outputs = relay.nn.sdense(x, fc_0_W)
 
