@@ -243,17 +243,17 @@ def test_take_infer_type():
     verify_take((d1, d2, d3, d4), (d5, d6), (d1, d2, d5, d6, d4), -2)
 
 def test_take():
-    def verify_take(src_shape, indices_src, axis=None):
+    def verify_take(src_shape, indices_src, axis=None, mode="clip"):
         src_dtype = "float32"
         indices_dtype = "int32"
         indices_src = np.array(indices_src, dtype=indices_dtype)
         x = relay.var("x", relay.TensorType(src_shape, src_dtype))
         indices = relay.var("indices", relay.TensorType(indices_src.shape, indices_dtype))
-        z = relay.take(x, indices, axis=axis)
+        z = relay.take(x, indices, axis=axis, mode=mode)
 
         func = relay.Function([x, indices], z)
         x_data = np.random.uniform(low=-1, high=1, size=src_shape).astype(src_dtype)
-        ref_res = np.take(x_data, indices=indices_src, axis=axis)
+        ref_res = np.take(x_data, indices=indices_src, axis=axis, mode=mode)
 
         for target, ctx in ctx_list():
             for kind in ["graph", "debug"]:
@@ -269,6 +269,12 @@ def test_take():
     verify_take((2,2), [[[1,0],[0,1]]], 0)
     verify_take((2,2), [[[1,0],[0,1]]], 1)
     verify_take((4,3,5,6), [[2,1,0,0]], -2)
+    verify_take((3,4), [-5, 20])
+    verify_take((3,4), [-5, 20], mode="wrap")
+    verify_take((3,4), [-1, 2], axis=0)
+    verify_take((3,4), [-1, 2], axis=0, mode="wrap")
+    verify_take((3,4), [-1, 2], axis=1)
+    verify_take((3,4), [-1, 2], axis=1, mode="wrap")
 
 
 def test_split_infer_type():
@@ -547,7 +553,6 @@ def test_stack():
     verify_stack([(2, 2, 3, 4), (2, 2, 3, 4), (2, 2, 3, 4), (2, 2, 3, 4)], -1)
 
 
-
 def test_reverse():
     def verify_reverse(dshape, axis):
         x = relay.var("x", relay.TensorType(dshape, "float32"))
@@ -565,6 +570,25 @@ def test_reverse():
     verify_reverse((2, 3, 4), 1)
     verify_reverse((4, 7), 0)
     verify_reverse((2, 3, 4), -1)
+
+
+def test_gather_nd():
+    def verify_gather_nd(xshape, yshape, y_data):
+        x = relay.var("x", relay.TensorType(xshape, "float32"))
+        y = relay.var("y", relay.TensorType(yshape, "int32"))
+        z = relay.gather_nd(x, y)
+
+        func = relay.Function([x, y], z)
+        x_data = np.random.uniform(size=xshape).astype("float32")
+        ref_res = x_data[y_data]
+
+        for target, ctx in ctx_list():
+            for kind in ["graph", "debug"]:
+                intrp = relay.create_executor(kind, ctx=ctx, target=target)
+                op_res = intrp.evaluate(func)(x_data, y_data)
+                tvm.testing.assert_allclose(op_res.asnumpy(), ref_res, rtol=1e-5)
+    verify_gather_nd((2, 2), (2, 3), [[1, 1, 0], [0, 1, 0]])
+    verify_gather_nd((2, 2, 2), (2, 2), [[0, 1], [1, 0]])
 
 
 if __name__ == "__main__":
@@ -595,3 +619,4 @@ if __name__ == "__main__":
     test_stack()
     test_tile()
     test_repeat()
+    test_gather_nd()

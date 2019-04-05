@@ -61,6 +61,7 @@ Expr MakeCast(Expr data,
   return CallNode::make(op, {data}, Attrs(attrs), {});
 }
 
+
 TVM_REGISTER_API("relay._make.cast")
 .set_body([](const TVMArgs& args, TVMRetValue* rv) {
     runtime::detail::unpack_call<Expr, 2>(MakeCast, args, rv);
@@ -78,6 +79,61 @@ RELAY_REGISTER_OP("cast")
 .set_attr<FTVMCompute>("FTVMCompute", CastCompute)
 .set_attr<TOpPattern>("TOpPattern", kElemWise)
 .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout);
+
+
+bool ReinterpretRel(const Array<Type>& types,
+             int num_inputs,
+             const Attrs& attrs,
+             const TypeReporter& reporter) {
+  CHECK_EQ(types.size(), 2);
+  const auto* data = types[0].as<TensorTypeNode>();
+  if (data == nullptr) {
+    CHECK(types[0].as<IncompleteTypeNode>())
+        << "Reinterpret: expect input type to be TensorType but get "
+        << types[0];
+    return false;
+  }
+  const auto* param = attrs.as<CastAttrs>();
+  reporter->Assign(types[1], TensorTypeNode::make(
+      data->shape, param->dtype));
+  return true;
+}
+
+Array<Tensor> ReinterpretCompute(const Attrs& attrs,
+                          const Array<Tensor>& inputs,
+                          const Type& out_type,
+                          const Target& target) {
+  const CastAttrs *param = attrs.as<CastAttrs>();
+  CHECK(param != nullptr);
+  DataType dtype = param->dtype;
+  return { topi::reinterpret(inputs[0], dtype) };
+}
+
+Expr MakeReinterpret(Expr data,
+              DataType dtype) {
+  auto attrs = make_node<CastAttrs>();
+  attrs->dtype = dtype;
+  static const Op& op = Op::Get("reinterpret");
+  return CallNode::make(op, {data}, Attrs(attrs), {});
+}
+
+TVM_REGISTER_API("relay._make.reinterpret")
+  .set_body([](const TVMArgs& args, TVMRetValue* rv) {
+      runtime::detail::unpack_call<Expr, 2>(MakeReinterpret, args, rv);
+    });
+
+  RELAY_REGISTER_OP("reinterpret")
+  .describe(R"code(Cast the data into a new data type.
+
+)code" TVM_ADD_FILELINE)
+  .set_num_inputs(1)
+  .set_attrs_type_key("relay.attrs.CastAttrs")
+  .add_argument("data", "Tensor", "The input tensor.")
+  .set_support_level(3)
+  .add_type_rel("Reinterpret", CastRel)
+  .set_attr<FTVMCompute>("FTVMCompute", ReinterpretCompute)
+  .set_attr<TOpPattern>("TOpPattern", kElemWise)
+  .set_attr<FInferCorrectLayout>("FInferCorrectLayout", ElemwiseArbitraryLayout);
 
 // relay.expand_dims
 TVM_REGISTER_NODE_TYPE(ExpandDimsAttrs);
@@ -753,24 +809,26 @@ Array<Tensor> TakeCompute(const Attrs& attrs,
   const auto* param = attrs.as<TakeAttrs>();
   CHECK(param != nullptr);
   if (!param->axis.defined()) {
-    return Array<Tensor>{ topi::take(inputs[0], inputs[1]) };
+    return Array<Tensor>{ topi::take(inputs[0], inputs[1], param->mode) };
   } else {
-    return Array<Tensor>{ topi::take(inputs[0], inputs[1], param->axis) };
+    return Array<Tensor>{ topi::take(inputs[0], inputs[1], param->axis, param->mode) };
   }
 }
 
 Expr MakeTake(Expr data,
               Expr indices,
-              Integer axis) {
+              Integer axis,
+              std::string mode) {
   auto attrs = make_node<TakeAttrs>();
   attrs->axis = std::move(axis);
+  attrs->mode = std::move(mode);
   static const Op& op = Op::Get("take");
   return CallNode::make(op, {data, indices}, Attrs(attrs), {});
 }
 
 TVM_REGISTER_API("relay.op._make.take")
 .set_body([](const TVMArgs& args, TVMRetValue* rv) {
-    runtime::detail::unpack_call<Expr, 3>(MakeTake, args, rv);
+    runtime::detail::unpack_call<Expr, 4>(MakeTake, args, rv);
 });
 
 RELAY_REGISTER_OP("take")
@@ -2118,6 +2176,76 @@ example below::
 .set_support_level(10)
 .add_type_rel("Reshape", ReshapeRel)
 .set_attr<FTVMCompute>("FTVMCompute", ReshapeCompute)
+.set_attr<TOpPattern>("TOpPattern", kInjective);
+
+// gather_nd operator
+bool GatherNDRel(const Array<Type>& types,
+                 int num_inputs,
+                 const Attrs& attrs,
+                 const TypeReporter& reporter) {
+  // `types` contains: [data, indices, result]
+  CHECK_EQ(types.size(), 3);
+  const auto* data = types[0].as<TensorTypeNode>();
+  const auto* indices = types[1].as<TensorTypeNode>();
+  if (data == nullptr) {
+    CHECK(types[0].as<IncompleteTypeNode>())
+        << "GatherND: expect input data type to be TensorType but get "
+        << types[0];
+    return false;
+  }
+  if (indices == nullptr) {
+    CHECK(types[1].as<IncompleteTypeNode>())
+        << "GatherND: expect indices type to be TensorType but get "
+        << types[1];
+    return false;
+  }
+  const size_t ndim = data->shape.size();
+  const IntImm* mdim = data->shape[0].as<IntImm>();
+  const size_t kdim = indices->shape.size() - 1;
+  CHECK(size_t(mdim->value) <= ndim)
+        << "GatherND: indices shape does satisfy.";
+
+  Array<IndexExpr> oshape;
+  for (size_t i = 1; i < kdim + 1; ++i)
+      oshape.push_back(indices->shape[i]);
+  for (size_t i = mdim->value; i < ndim; ++i)
+      oshape.push_back(data->shape[i]);
+  reporter->Assign(types[2], TensorTypeNode::make(oshape, data->dtype));
+  return true;
+}
+
+Array<Tensor> GatherNDCompute(const Attrs& attrs,
+                              const Array<Tensor>& inputs,
+                              const Type& out_type,
+                              const Target& target) {
+  return { topi::gather_nd(inputs[0], inputs[1]) };
+}
+
+Expr MakeGatherND(Expr data,
+                  Expr indices) {
+  static const Op& op = Op::Get("gather_nd");
+  return CallNode::make(op, {data, indices}, {});
+}
+
+TVM_REGISTER_API("relay.op._make.gather_nd")
+.set_body([](const TVMArgs& args, TVMRetValue* rv) {
+    runtime::detail::unpack_call<Expr, 2>(MakeGatherND, args, rv);
+});
+
+RELAY_REGISTER_OP("gather_nd")
+.describe(R"code(Gather elements or slices from data and store to
+                 a tensor whose shape is defined by indices.
+
+Given data with shape (X_0, X_1, ..., X_{N-1}) and indices with
+shape (M, Y_0, ..., Y_{K-1}), the output will have shape
+(Y_0, ..., Y_{K-1}, X_M, ..., X_{N-1}), where M <= N. If M == N,
+output shape will simply be (Y_0, ..., Y_{K-1}).
+)code" TVM_ADD_FILELINE)
+.set_num_inputs(2)
+.add_argument("data", "Tensor", "The input tensor.")
+.set_support_level(3)
+.add_type_rel("GatherND", GatherNDRel)
+.set_attr<FTVMCompute>("FTVMCompute", GatherNDCompute)
 .set_attr<TOpPattern>("TOpPattern", kInjective);
 
 }  // namespace relay
