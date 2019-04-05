@@ -15,6 +15,7 @@ import logging
 import os
 import argparse
 import sys
+import time
 
 sys.settrace
 
@@ -26,10 +27,11 @@ parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
 parser.add_argument("--bs_r", type=int, default=0)
 parser.add_argument("--bs_c", type=int, default=0)
-parser.add_argument("--tuner", type=str, default="ga",
+parser.add_argument("--tuner", type=str, default="xgboost",
                     choices=["ga", "xgboost"])
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
+parser.add_argument("--default_schedule", action="store_true")
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -41,7 +43,9 @@ if args.debug:
 else:
     import tvm.contrib.graph_runtime as graph_runtime
 
-# logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.DEBUG)
+
+np.random.seed(int(time.clock()))
 dtype = "float32"
 itype = 'int32'
 
@@ -132,8 +136,8 @@ def instantiate(param):
 print("sdense")
 x = relay.var("x", shape=[M, K], dtype=dtype)
 fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=dtype))
-zero = relay.var("zero", shape=(M, N), dtype=dtype)
-outputs = relay.add(relay.nn.sdense(x, fc_0_W), zero)
+# zero = relay.var("zero", shape=(M, N), dtype=dtype)
+outputs = relay.nn.sdense(x, fc_0_W)
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 # print(func.astext(show_meta_data=False))
@@ -141,7 +145,7 @@ relay.ir_pass.infer_type(func)
 # print(func.astext(show_meta_data=False))
 
 param_vars = [
-    fc_0_W, zero
+    fc_0_W
 ]
 input_vars = [x]
 
@@ -191,8 +195,8 @@ if args.tune:
     sys.exit()
 
 
-with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
-# if 1:
+def build_graph():
+    global func
     with relay.build_config(opt_level=3):
         func = relay.optimize(func, target=skl_target, params=params)
         # print(func.astext(show_meta_data=False))
@@ -209,6 +213,13 @@ with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
         for (k, v) in new_params.items():
             print(k, v.shape)
         '''
+        return graph, lib, new_params
+
+if args.default_schedule:
+    (graph, lib, new_params) = build_graph()
+else:
+    with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
+        (graph, lib, new_params) = build_graph()
 
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
 r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}

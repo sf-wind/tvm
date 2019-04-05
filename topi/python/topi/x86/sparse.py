@@ -84,12 +84,28 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
 
 
 def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
-    cfg["align_data"] = OtherOptionEntity(False)
-    cfg["rfactor_bs_c"] = OtherOptionEntity(True)
-    for i in range(NUM_AXIS):
-        cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
-    cfg["vectorize_axis"] = OtherOptionEntity(-1)
-    cfg["parallel_axis"] = OtherOptionEntity(-1)
+    # import pdb; pdb.set_trace()
+    if M == 1 and BS_R == 1 and BS_C >= 16:
+        cfg["align_data"] = OtherOptionEntity(False)
+        cfg["rfactor_bs_c"] = OtherOptionEntity(True)
+        for i in range(NUM_AXIS):
+            cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
+        cfg["vectorize_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
+    elif M == 1 and BS_R >= 16 and BS_C == 1:
+        cfg["align_data"] = OtherOptionEntity(False)
+        cfg["rfactor_bs_c"] = OtherOptionEntity(False)
+        for i in range(NUM_AXIS):
+            cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
+        cfg["vectorize_axis"] = OtherOptionEntity(2)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
+    else:
+        cfg["align_data"] = OtherOptionEntity(False)
+        cfg["rfactor_bs_c"] = OtherOptionEntity(True)
+        for i in range(NUM_AXIS):
+            cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
+        cfg["vectorize_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
 
 
 @autotvm.register_topi_schedule(generic.schedule_sdense, 'cpu', ['direct'])
@@ -139,6 +155,7 @@ def schedule_sdense_mknk(s, cfg, op, out):
     I = get_const_int(op_o.shape[0])
     BS_C = get_const_int(bs_c.dom.extent)
     BS_R = get_const_int(Y.shape[2])
+    BF = None
     if cfg['rfactor_bs_c'].val is True:
         # import pdb; pdb.set_trace()
         BF = s.rfactor(Y, bs_c, factor_axis=2)
@@ -153,16 +170,18 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["parallel_axis"].val >= 0 and \
                 new_axis[cfg["parallel_axis"].val] != felem_idx:
             s[BF].parallel(new_axis[cfg["parallel_axis"].val])
+        # s[BF].compute_at(s[op_o], nb)
     else:
+        # import pdb; pdb.set_trace()
         axes = [elem_idx, bs_c, r, i]
         new_axis = reorder_axes(cfg, "axis_", axes)
-        s[Y_op].reorder(nb, *new_axis)
+        s[Y].reorder(nb, *new_axis)
         if cfg["vectorize_axis"].val >= 0 and \
                 new_axis[cfg["vectorize_axis"].val] != elem_idx:
-            s[Y_op].vectorize(new_axis[cfg["vectorize_axis"].val])
+            s[Y].vectorize(new_axis[cfg["vectorize_axis"].val])
         if cfg["parallel_axis"].val >= 0 and \
                 new_axis[cfg["parallel_axis"].val] != elem_idx:
-            s[Y_op].parallel(new_axis[cfg["parallel_axis"].val])
+            s[Y].parallel(new_axis[cfg["parallel_axis"].val])
     '''
     if op != out:
         (yo, yi) = s[out].split(s[out].op.axis[0], 32)
@@ -170,7 +189,6 @@ def schedule_sdense_mknk(s, cfg, op, out):
         s[Y].compute_at(s[out], yo)
         s[out].vectorize(yi)
     '''
-
 
 @generic.schedule_sparse_dense.register(["cpu"])
 def schedule_sparse_dense(outs):
