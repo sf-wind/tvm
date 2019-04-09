@@ -46,6 +46,25 @@ logging.basicConfig(level=logging.DEBUG)
 
 np.random.seed(int(time.clock()))
 
+def sparsify(arr, BS_R, BS_C, density):
+    (M, N) = arr.shape
+    Y = np.zeros((M, N), dtype="float32")
+    assert M % BS_R == 0
+    assert N % BS_C == 0
+    nnz = int(density * M * N)
+    num_blocks = int(nnz / (BS_R * BS_C)) + 1
+    candidate_blocks = np.asarray(
+        list(itertools.product(range(0, M, BS_R),
+                               range(0, N, BS_C))))
+    assert candidate_blocks.shape[0] == M // BS_R * N // BS_C
+    chosen_blocks = candidate_blocks[
+        np.random.choice(candidate_blocks.shape[0], size=num_blocks, replace=False)]
+    for i in range(len(chosen_blocks)):
+        r, c = chosen_blocks[i]
+        Y[r:r + BS_R, c:c + BS_C] = arr[r:r + BS_R, c:c + BS_C]
+    return Y
+
+'''
 def sparsify(arr, BS_R, BS_C, density, dtype="float32", wdtype="float32"):
     (M, N) = arr.shape
     assert M % BS_R == 0
@@ -65,7 +84,7 @@ def sparsify(arr, BS_R, BS_C, density, dtype="float32", wdtype="float32"):
     if wdtype == "uint16":
         bb = (bb.view(dtype="uint32") >> 16).astype("uint16")
     return bb
-
+'''
 
 BS_R = args.bs_r if args.bs_r > 0 else 1
 BS_C = args.bs_c if args.bs_c > 0 else 1
@@ -306,6 +325,7 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         "rnn1_weight_hh": tvm.ndarray.array(rnn1.weight_hh.detach().numpy()),
         "rnn1_bias_ih": tvm.ndarray.array(rnn1.bias_ih.detach().numpy()),
         "rnn1_bias_hh": tvm.ndarray.array(rnn1.bias_hh.detach().numpy()),
+        "fc1_W": tvm.ndarray.array(fc1factored.weight.detach().numpy()),
         "fc1_B": tvm.ndarray.array(fc1factored.bias.detach().numpy()),
         "fc2_W": tvm.ndarray.array(fc2.weight.detach().numpy()),
         "fc2_B": tvm.ndarray.array(fc2.bias.detach().numpy()),
