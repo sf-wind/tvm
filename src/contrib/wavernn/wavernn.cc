@@ -149,7 +149,7 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
     int start = 0;
     for (int i = 1; i < num_parallel_samples; i++) {
       int num = num_parallel_samples - i;
-      int col = output_end -1 - i;
+      int col = output_end - i;
       for (int j = 0; j < num; j++) {
         x_data[start + j] = out_data[j * out_num + col];
       }
