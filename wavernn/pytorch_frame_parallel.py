@@ -168,13 +168,12 @@ def test_pytorch_reference():
 
 
 def factored_premul_frame(a1, a2, m, outputs_0, h1_0):
-    import pdb; pdb.set_trace()
     tvm_random_seed(10)
     I_residual =  m[0] @ I.weight[:, x_num:x_num + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, x_num + feat_dims:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
 
     Ifactored = nn.Linear(x_num, rnn_dims)
-    Ifactored.weight[:, :] = I.weight[:, :1]
+    Ifactored.weight[:, :] = I.weight[:, :x_num]
     Ifactored.bias[:] = I.bias[:]
 
     (outputs, h1) = (outputs_0, h1_0)
@@ -501,13 +500,14 @@ def factored_relay_frame(a1, a2, m, outputs_0, h1_0):
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
 
     for t in range(T):
-        x = np.tensor((1, x_num))
+        x = np.empty((1, x_num))
+        import pdb; pdb.set_trace()
         start = 0
         for shift in np.arange(1,num_parallel_samples):
             end = start + num_parallel_samples - shift
             x[0, start:end] = outputs[0:(num_parallel_samples-shift), -shift]
             start = end
-        x = tvm.ndarray.array(x)
+        x = tvm.ndarray.array(x.astype("float32"))
         inputs = {
             "x": x,
             "h1": h1,
@@ -519,10 +519,10 @@ def factored_relay_frame(a1, a2, m, outputs_0, h1_0):
         module.run()
         num_outputs = module.get_num_outputs()
         h1 = module.get_output(num_outputs-1)
-        output = np.empty(num_outputs-1)
+        output = torch.empty(num_outputs-1)
         for i in range(num_outputs-1):
             x_prob = module.get_output(i)
-            x = sample_proba(torch.tensor(x_prob.asnumpy())).numpy()
+            x = sample_proba(torch.tensor(x_prob.asnumpy()))
             output[i] = x
         output = output.unsqueeze(1)
         outputs = torch.cat([outputs, output], dim=1)
@@ -540,20 +540,22 @@ def factored_relay_cpp_frame(a1, a2, m, outputs_0, h1_0):
     I_residual = m[0] @ I.weight[:, x_num:x_num + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, x_num + feat_dims:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
 
-    frame_func = tvm.get_global_func("tvm.contrib.wavernn.frame")
+    frame_func = tvm.get_global_func("tvm.contrib.wavernn.parallel_frame")
+    np_outs = np.random.randn(num_parallel_samples, T + num_parallel_samples - 1).astype("float32")
+    np_outs[:, :num_parallel_samples-1] = outputs
+    outs = tvm.ndarray.array(np_outs)
 
-    outs = tvm.ndarray.array(np.random.randn(T).astype("float32"))
-    h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
+    # h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
     frame_func(
         # Inputs
         tvm.ndarray.array(I_residual),
         tvm.ndarray.array(fc1_residual),
-        tvm.ndarray.array(x_0),
         tvm.ndarray.array(h1_0),
-        # Outputs
+        # inouts
         outs,
         h1,
         # Temporary storage to make entire frame_func allocation free.
+        tvm.ndarray.array(np.random.randn(1, x_num).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, n_classes).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, fc_dims).astype("float32")),
@@ -616,14 +618,14 @@ def test_relay_frame():
 def test_relay_cpp_frame():
     with torch.no_grad():
         outs_ref, h1_ref = reference()
-        outs_new, h1_new = factored_relay_cpp_frame(a1, a2, m, x_0, h1_0)
+        outs_new, h1_new = factored_relay_cpp_frame(a1, a2, m, outputs_0, h1_0)
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
 def test_relay_cpp_frame_fast():
     with torch.no_grad():
         outs_ref, h1_ref = reference()
-        outs_new, h1_new = factored_relay_cpp_frame_fast(a1, a2, m, x_0, h1_0)
+        outs_new, h1_new = factored_relay_cpp_frame_fast(a1, a2, m, outputs_0, h1_0)
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         print(h1_ref, h1_new)
         print(outs_ref, outs_new)
@@ -657,6 +659,8 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
-test_factored_premul_frame()
+# test_factored_premul_frame()
+# test_relay_frame()
+test_relay_cpp_frame()
 # skylake()
 # haswell()

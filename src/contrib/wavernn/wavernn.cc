@@ -102,5 +102,88 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.frame")
 
 });
 
+TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
+.set_body([](TVMArgs args, TVMRetValue *ret) {
+  DLTensor* I_residual = args[0];
+  DLTensor* fc1_residual = args[1];
+  DLTensor* h1_0 = args[2];
+  DLTensor* outs = args[3];
+  DLTensor* h1_out = args[4];
+  DLTensor* x = args[5];
+  DLTensor* x_proba = args[6];
+  DLTensor* I_residual_t = args[7];
+  DLTensor* fc1_residual_t = args[8];
+  const std::string& graph_json = args[9];
+  const std::string& lib_path = args[10];
+  const std::string& serialized_params = args[11];
+
+  constexpr int device_type = kDLCPU;
+  constexpr int device_id = 0;
+  Module lib = Module::LoadFromFile(lib_path, "so");
+  tvm::runtime::Module sample_module = (*tvm::runtime::Registry::Get("tvm.graph_runtime.create"))(
+      graph_json, lib, device_type, device_id);
+  auto* gr = static_cast<GraphRuntime*>(sample_module.operator->());
+  gr->LoadParams(serialized_params);
+
+  const size_t T = I_residual->shape[0];
+  const size_t out_num = outs->shape[1];
+  DLTensor* h1 = h1_0;
+  int num_parallel_samples = gr->NumOutputs() - 1;
+
+  auto sample_proba = [&](const float* p) -> float {
+    std::uniform_real_distribution<float> dis;
+    const float rand = dis(*gen);
+    size_t rand_sample = 0;
+    float prob_sum = p[0];
+    while (prob_sum < rand) {
+      rand_sample += 1;
+      prob_sum += p[rand_sample];
+    }
+    return static_cast<float>(rand_sample) / 256;
+  };
+
+  float *out_data = static_cast<float*>(outs->data);
+  float *x_data = static_cast<float*>(x->data);
+  for (size_t t = 0; t < T; ++t) {
+    int output_end = num_parallel_samples - 1 + t;
+    int start = 0;
+    for (int i = 1; i < num_parallel_samples; i++) {
+      int num = num_parallel_samples - i;
+      int col = output_end -1 - i;
+      for (int j = 0; j < num; j++) {
+        x_data[start + j] = out_data[j * out_num + col];
+      }
+      start = start + num;
+    }
+    gr->SetInput(gr->GetInputIndex("x"), x);
+    gr->SetInput(gr->GetInputIndex("h1"), h1);
+
+    std::copy_n(static_cast<float*>(I_residual->data) + t * I_residual->shape[1],
+                I_residual->shape[1], static_cast<float*>(I_residual_t->data));
+    gr->SetInput(gr->GetInputIndex("I_residual"), const_cast<DLTensor*>(I_residual_t));
+
+    std::copy_n(static_cast<float*>(fc1_residual->data) + t * fc1_residual->shape[1],
+                fc1_residual->shape[1], static_cast<float*>(fc1_residual_t->data));
+    gr->SetInput(gr->GetInputIndex("fc1_residual"), const_cast<DLTensor*>(fc1_residual_t));
+    gr->Run();
+
+    // Update h1
+    gr->CopyOutputTo(gr->NumOutputs() - 1, h1);
+
+
+    // Compute and update new sampled x values
+    for (int i = 0; i < num_parallel_samples; i++) {
+      gr->CopyOutputTo(0, x_proba);
+      const auto x_t = sample_proba(static_cast<const float*>(x_proba->data));
+      static_cast<float*>(outs->data)[i * out_num + output_end] = x_t;
+    }
+  }
+
+  // Copy out final hidden state.
+  std::copy_n(static_cast<const float*>(h1->data), h1->shape[1], static_cast<float*>(h1_out->data));
+
+});
+
+
 }  // namespace contrib
 }  // namespace tvm
