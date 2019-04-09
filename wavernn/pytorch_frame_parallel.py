@@ -397,8 +397,8 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
 
     x_fc = relay.nn.relu(sparse_dense(xres, Rfc1_W, Rfc1_B) + Rfc1_residual)
 
-    Rfc2_W = to_sparse(relay.var("fc2_W", shape=(n_classes, fc_dims), dtype="float32"), fc2.weight.detach().numpy())
-    Rfc2_B = relay.var("fc2_B", shape=(n_classes,), dtype="float32")
+    Rfc2_W = to_sparse(relay.var("fc2_W", shape=(n_classes * num_parallel_samples, fc_dims), dtype="float32"), fc2.weight.detach().numpy())
+    Rfc2_B = relay.var("fc2_B", shape=(n_classes * num_parallel_samples,), dtype="float32")
 
     x_dense = sparse_dense(x_fc, Rfc2_W, Rfc2_B)
     x_prob_tuple = relay.split(x_dense, num_parallel_samples, axis=1)
@@ -410,7 +410,7 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         x_prob = x_prob_unnorm / x_prob_sum
         tuple.append(x_prob)
 
-    outputs = relay.expr.Tuple(x_prob + [h1])
+    outputs = relay.expr.Tuple(tuple + [h1])
     func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
     func = relay.ir_pass.infer_type(func)
     # print(func.astext())
@@ -501,7 +501,7 @@ def factored_relay_frame(a1, a2, m, outputs_0, h1_0):
 
     for t in range(T):
         x = np.empty((1, x_num))
-        import pdb; pdb.set_trace()
+        # import pdb; pdb.set_trace()
         start = 0
         for shift in np.arange(1,num_parallel_samples):
             end = start + num_parallel_samples - shift
@@ -566,31 +566,34 @@ def factored_relay_cpp_frame(a1, a2, m, outputs_0, h1_0):
     )
     return outs.asnumpy(), h1.asnumpy()
 
-def factored_relay_cpp_frame_fast(a1, a2, m, x_0, h1_0):
+def factored_relay_cpp_frame_fast(a1, a2, m, outputs_0, h1_0):
     tvm_random_seed(10)
-    (x, h1) = (tvm.ndarray.array(x_0), tvm.ndarray.array(h1_0))
+    outputs = outputs_0
+    h1 = tvm.ndarray.array(h1_0)
     T = a1.shape[1]
     (graph, lib, params) = build_fast_wavernn_module(profile=False)
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
         lib.export_library(lib_f.name)
-    I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
+    I_residual = m[0] @ I.weight[:, x_num:x_num + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, x_num + feat_dims:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
 
-    frame_func = tvm.get_global_func("tvm.contrib.wavernn.frame")
+    frame_func = tvm.get_global_func("tvm.contrib.wavernn.parallel_frame")
 
-    outs = tvm.ndarray.array(np.random.randn(T).astype("float32"))
-    h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
+    np_outs = np.random.randn(num_parallel_samples, T + num_parallel_samples - 1).astype("float32")
+    np_outs[:, :num_parallel_samples-1] = outputs
+    outs = tvm.ndarray.array(np_outs)
+    # h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
     frame_func(
         # Inputs
         tvm.ndarray.array(I_residual),
         tvm.ndarray.array(fc1_residual),
-        tvm.ndarray.array(x_0),
         tvm.ndarray.array(h1_0),
-        # Outputs
+        # inouts
         outs,
         h1,
         # Temporary storage to make entire frame_func allocation free.
+        tvm.ndarray.array(np.random.randn(1, x_num).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, n_classes).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, fc_dims).astype("float32")),
@@ -661,6 +664,7 @@ def haswell():
 
 # test_factored_premul_frame()
 # test_relay_frame()
-test_relay_cpp_frame()
+# test_relay_cpp_frame()
+test_relay_cpp_frame_fast()
 # skylake()
 # haswell()
