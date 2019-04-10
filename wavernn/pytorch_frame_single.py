@@ -13,6 +13,32 @@ import itertools
 import scipy.sparse as sp
 torch.manual_seed(42)
 
+parser = argparse.ArgumentParser()
+parser.add_argument("--device", type=str, default='cpu')
+parser.add_argument("--tune", action="store_true")
+parser.add_argument("--debug", action="store_true")
+parser.add_argument("--num_threads", type=int, default=0)
+parser.add_argument("--m", type=int, default=0)
+parser.add_argument("--bs_r", type=int, default=0)
+parser.add_argument("--bs_c", type=int, default=0)
+parser.add_argument("--tuner", type=str, default="xgboost",
+                    choices=["ga", "xgboost"])
+parser.add_argument("--target", type=str, default="core-avx2",
+                    choices=["core-avx2", "skylake-avx512"])
+parser.add_argument("--default_schedule", action="store_true")
+parser.add_argument("--wtype", type=str, default="float32",
+                    choices=["float32", "bfloat16"])
+parser.add_argument("--sdense", action="store_true")
+args = parser.parse_args()
+
+if args.num_threads > 0:
+    num_threads = args.num_threads
+    os.environ["TVM_NUM_THREADS"] = str(num_threads)
+
+if args.debug:
+    from tvm.contrib.debugger import debug_runtime as graph_runtime
+else:
+    import tvm.contrib.graph_runtime as graph_runtime
 
 def sparsify(arr, BS_R, BS_C, density):
     (M, N) = arr.shape
@@ -287,7 +313,11 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         return relay.expr.const(x, "float32")
 
     def sparse_dense(X, W, B, **kwargs):
-        return relay.nn.bias_add(relay.nn.sparse_dense(X, W), B)
+        if args.sdense:
+            d = relay.nn.sdense(X, W)
+        else:
+            d = relay.nn.sparse_dense(X, W)
+        return relay.nn.bias_add(d, B)
 
     def dense(X, W, B, **kwargs):
         return relay.nn.bias_add(relay.nn.dense(X, W), B)
@@ -409,7 +439,7 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         }
         r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
         r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
-        module = tvm.contrib.graph_runtime.create(graph, rlib, ctx)
+        module = graph_runtime.create(graph, rlib, ctx)
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
         ftimer = module.module.time_evaluator("run", ctx, number=100000)
@@ -426,7 +456,7 @@ def factored_relay_frame(a1, a2, m, x_0, h1_0):
     outs = []
     T = a1.shape[1]
     (graph, lib, params) = build_wavernn_module()
-    module = tvm.contrib.graph_runtime.create(graph, lib, tvm.cpu(0))
+    module = graph_runtime.create(graph, lib, tvm.cpu(0))
     module.set_input(**params)
 
     I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
