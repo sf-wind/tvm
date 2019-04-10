@@ -352,7 +352,7 @@ def build_fast_wavernn_module(target="llvm", tune=False, profile=False):
         v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
         v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
         v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
-        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if wdtype != "bfloat16" else tvm.ndarray.array(to_bf16(sp_arr.data))
+        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
         params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
         params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
