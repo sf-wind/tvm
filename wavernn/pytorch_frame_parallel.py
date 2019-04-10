@@ -31,6 +31,7 @@ parser.add_argument("--target", type=str, default="core-avx2",
 parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--wtype", type=str, default="float32",
                     choices=["float32", "bfloat16"])
+parser.add_argument("--sdense", action="store_true")
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -88,7 +89,8 @@ def sparsify(arr, BS_R, BS_C, density, dtype="float32", wdtype="float32"):
 
 BS_R = args.bs_r if args.bs_r > 0 else 1
 BS_C = args.bs_c if args.bs_c > 0 else 1
-
+BS_R = 16
+BS_C = 1
 rnn_dims = 1024
 fc_dims = 1024
 
@@ -368,7 +370,11 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         return relay.expr.const(x, "float32")
 
     def sparse_dense(X, W, B, **kwargs):
-        return relay.nn.bias_add(relay.nn.sparse_dense(X, W), B)
+        if args.sdense:
+            d = relay.nn.sdense(X, W)
+        else:
+            d = relay.nn.sparse_dense(X, W)
+        return relay.nn.bias_add(d, B)
 
     def dense(X, W, B, **kwargs):
         return relay.nn.bias_add(relay.nn.dense(X, W), B)
@@ -496,13 +502,15 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         }
         r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
         r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
-        module = tvm.contrib.graph_runtime.create(graph, rlib, ctx)
+        module = graph_runtime.create(graph, rlib, ctx)
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
         ftimer = module.module.time_evaluator("run", ctx, number=100000)
         for i in range(5):
             prof_res = ftimer()
             print("TVM time: {:.2f}us".format(prof_res.mean * 10 ** 6))
+        module.run()
+        module.run()
 
     return (graph, lib, new_params)
 
@@ -513,7 +521,7 @@ def factored_relay_frame(a1, a2, m, outputs_0, h1_0):
     outputs = outputs_0
     T = a1.shape[1]
     (graph, lib, params) = build_wavernn_module()
-    module = tvm.contrib.graph_runtime.create(graph, lib, tvm.cpu(0))
+    module = graph_runtime.create(graph, lib, tvm.cpu(0))
     module.set_input(**params)
 
     I_residual = m[0] @ I.weight[:, x_num:x_num + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, x_num + feat_dims:].transpose(1, 0)
@@ -650,8 +658,8 @@ def test_relay_cpp_frame_fast():
         outs_ref, h1_ref = reference()
         outs_new, h1_new = factored_relay_cpp_frame_fast(a1, a2, m, outputs_0, h1_0)
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
-        print(h1_ref, h1_new)
-        print(outs_ref, outs_new)
+        # print(h1_ref, h1_new)
+        # print(outs_ref, outs_new)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
 def skylake():
@@ -686,5 +694,5 @@ def haswell():
 # test_relay_frame()
 # test_relay_cpp_frame()
 test_relay_cpp_frame_fast()
-# skylake()
+skylake()
 # haswell()
