@@ -448,6 +448,8 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         for i in range(5):
             prof_res = ftimer()
             print("TVM time: {:.2f}us".format(prof_res.mean * 10 ** 6))
+        module.run()
+        module.run()
 
     return (graph, lib, new_params)
 
