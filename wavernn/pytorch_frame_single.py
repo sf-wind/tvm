@@ -1,5 +1,5 @@
 import logging
-logging.basicConfig(level=logging.DEBUG)
+# logging.basicConfig(level=logging.DEBUG)
 
 import torch
 from torch import nn
@@ -262,7 +262,7 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
-def build_fast_wavernn_module(target="llvm", tune=False, profile=False):
+def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", tune=False, profile=False):
     Ifactored = nn.Linear(1, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :1]
     Ifactored.bias[:] = I.bias[:]
@@ -348,7 +348,7 @@ def build_fast_wavernn_module(target="llvm", tune=False, profile=False):
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
-        print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
+        # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
         v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
         v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
         v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
@@ -383,18 +383,18 @@ def build_fast_wavernn_module(target="llvm", tune=False, profile=False):
     outputs = relay.expr.Tuple([x_prob, h1])
     func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
     func = relay.ir_pass.infer_type(func)
-    print(func.astext())
+    # print(func.astext())
     TARGET = tvm.target.create(target)
     log_filename = "lpcnet_no_bf16_autotvm_skl.log"
 
     if tune:
         with relay.build_config(opt_level=2):
             func = relay.optimize(func, target=TARGET, params=params)
-            print(func.astext(show_meta_data=False))
+            # print(func.astext(show_meta_data=False))
             tasks = autotvm.task.extract_from_program(
                 func, target=TARGET, params=params, ops=(relay.op.nn.dense,))
             for i, tsk in enumerate(tasks):
-                print(tsk)
+                # print(tsk)
                 prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
 
                 tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
@@ -586,6 +586,16 @@ def test_relay_cpp_frame_fast():
         print(outs_ref, outs_new)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+def test(target):
+    print("wdtype={}, witype={}".format("float32", "int32"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="int32", profile=True)
+    print("wdtype={}, witype={}".format("uint16", "int32"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="int32", profile=True)
+    print("wdtype={}, witype={}".format("float32", "uint16"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="uint16", profile=True)
+    print("wdtype={}, witype={}".format("uint16", "uint16"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="uint16", profile=True)
+
 def skylake():
     (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", profile=True)
     with open(
@@ -614,6 +624,8 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
+test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
+test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
-skylake()
+# skylake()
 # haswell()

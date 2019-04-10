@@ -174,7 +174,7 @@ def dense_alter_layout(attrs, inputs, tinfo, F):
     # query schedule and fallback if necessary
     workload = autotvm.task.args_to_workload(
         [tinfo[0], tinfo[1], None, attrs['data_layout'], attrs['kernel_layout'], attrs['out_layout']], nn.dense)
-    print(workload)
+    # print(workload)
 
     cfg = dispatch_ctx.query(target, workload)
     if cfg.is_fallback:
