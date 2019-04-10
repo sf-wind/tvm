@@ -262,7 +262,7 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
-def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", tune=False, profile=False):
+def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sdense=False, tune=False, profile=False):
     Ifactored = nn.Linear(1, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :1]
     Ifactored.bias[:] = I.bias[:]
@@ -320,7 +320,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", tu
         return relay.expr.const(x, "float32")
 
     def sparse_dense(X, W, B, **kwargs):
-        if args.sdense:
+        if sdense:
             d = relay.nn.sdense(X, W)
         else:
             d = relay.nn.sparse_dense(X, W)
@@ -587,14 +587,23 @@ def test_relay_cpp_frame_fast():
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
 def test(target):
-    print("wdtype={}, witype={}".format("float32", "int32"))
-    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="int32", profile=True)
-    print("wdtype={}, witype={}".format("uint16", "int32"))
-    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="int32", profile=True)
-    print("wdtype={}, witype={}".format("float32", "uint16"))
-    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="uint16", profile=True)
-    print("wdtype={}, witype={}".format("uint16", "uint16"))
-    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="uint16", profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("float32", "int32", "False"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="int32", sdense=False, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("uint16", "int32", "False"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="int32", sdense=False, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("float32", "uint16", "False"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="uint16", sdense=False, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("uint16", "uint16", "False"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="uint16", sdense=False, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("float32", "int32", "True"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="int32", sdense=True, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("uint16", "int32", "True"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="int32", sdense=True, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("float32", "uint16", "True"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="float32", witype="uint16", sdense=True, profile=True)
+    print("wdtype={}, witype={}, sdense={}".format("uint16", "uint16", "True"))
+    (graph, lib, params) = build_fast_wavernn_module(target, wdtype="uint16", witype="uint16", sdense=True, profile=True)
+
 
 def skylake():
     (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", profile=True)
@@ -624,7 +633,7 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
-test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
+# test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
 test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
 # skylake()
