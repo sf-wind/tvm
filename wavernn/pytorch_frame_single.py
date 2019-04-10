@@ -28,8 +28,10 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
-parser.add_argument("--wtype", type=str, default="float32",
+parser.add_argument("--wdtype", type=str, default="bfloat16",
                     choices=["float32", "bfloat16"])
+parser.add_argument("--witype", type=str, default="int32",
+                    choices=["int32", "uint16"])
 parser.add_argument("--sdense", action="store_true")
 args = parser.parse_args()
 
@@ -41,6 +43,9 @@ if args.debug:
     from tvm.contrib.debugger import debug_runtime as graph_runtime
 else:
     import tvm.contrib.graph_runtime as graph_runtime
+
+wdtype = "uint16" if args.wdtype == "bfloat16" else "float32"
+witype = "uint16" if args.witype == "uint16" else "int32"
 
 def sparsify(arr, BS_R, BS_C, density):
     (M, N) = arr.shape
@@ -257,7 +262,7 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
-def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile=False):
+def build_fast_wavernn_module(target="llvm", tune=False, profile=False):
     Ifactored = nn.Linear(1, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :1]
     Ifactored.bias[:] = I.bias[:]
@@ -344,11 +349,11 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
         print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
-        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype="float32" if not bfloat16 else "uint16")
-        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype="int32")
+        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
+        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
         v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
-        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if not bfloat16 else tvm.ndarray.array(to_bf16(sp_arr.data))
-        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices)
+        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if wdtype != "bfloat16" else tvm.ndarray.array(to_bf16(sp_arr.data))
+        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
         params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
 
@@ -444,7 +449,7 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         module = graph_runtime.create(graph, rlib, ctx)
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
-        ftimer = module.module.time_evaluator("run", ctx, number=100000)
+        ftimer = module.module.time_evaluator("run", ctx, number=10000)
         for i in range(5):
             prof_res = ftimer()
             print("TVM time: {:.2f}us".format(prof_res.mean * 10 ** 6))
@@ -582,7 +587,7 @@ def test_relay_cpp_frame_fast():
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
 def skylake():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", bfloat16=True, profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", profile=True)
     with open(
             "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -596,7 +601,7 @@ def skylake():
     lib.save("skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
 def haswell():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu", bfloat16=True, profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu", profile=True)
     with open(
             "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -609,5 +614,6 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
+# test_relay_cpp_frame_fast()
 skylake()
 # haswell()

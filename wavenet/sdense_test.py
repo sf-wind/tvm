@@ -32,8 +32,10 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
-parser.add_argument("--wtype", type=str, default="float32",
+parser.add_argument("--wdtype", type=str, default="float32",
                     choices=["float32", "bfloat16"])
+parser.add_argument("--witype", type=str, default="int32",
+                    choices=["int32", "uint16"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -49,7 +51,8 @@ logging.basicConfig(level=logging.DEBUG)
 
 np.random.seed(int(time.clock()))
 dtype = "float32"
-wdtype = "uint16" if args.wtype == "bfloat16" else "float32"
+wdtype = "uint16" if args.wdtype == "bfloat16" else "float32"
+witype = "uint16" if args.witype == "uint16" else "int32"
 itype = 'int32'
 
 context = "llvm -mcpu=" + args.target
@@ -71,9 +74,9 @@ assert K % BS_C == 0
 
 print("\n\nmatrix: [{}, {}] * [{}, {}], BS_R: {}, BS_C: {}".format(M, K, K, N, BS_R, BS_C))
 
-density = 0.04
+density = 0.05
 a = tvm.nd.array(np.random.rand(M, K).astype(dtype), ctx)
-filename = str(M) + "_" + str(N) + "_" + str(K) + "_" + str(BS_R) + "_" + str(BS_C) + ".npz"
+filename = str(M) + "_" + str(N) + "_" + str(K) + "_" + str(BS_R) + "_" + str(BS_C) + "_" + str(density) + ".npz"
 if os.path.isfile("mask_data/" + filename):
     with open("mask_data/" + filename, "rb") as f:
         mask = np.load(f)
@@ -86,7 +89,8 @@ mask = np.repeat(mask, BS_R, axis=0)
 
 bb = (np.random.rand(N, K).astype(dtype) * mask).astype(dtype)
 if wdtype == "uint16":
-    bb = (bb.view(dtype="uint32") >> 16).astype("uint16")
+    assert bb.dtype == np.float32
+    bb = ((bb.view('<u4') + 2 ** 15) >> 16).astype("uint16")
 bsr_m = bsr_matrix(bb, blocksize=(BS_R, BS_C))
 csr_m = bsr_m.tocsr(True)
 b = tvm.nd.array(bb, ctx)
@@ -104,22 +108,13 @@ CSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'den
 BSR = collections.namedtuple('CSR', ['data', 'indices', 'indptr', 'N', 'K', 'BS_R', 'BS_C', 'density'])
 
 
-def to_csr(v, density=0.04):
-    name = v.name_hint
-    (N, K) = v.type_annotation.concrete_shape
-    nnz = num_nonzeros
-    v_data = relay.var(name + "_data", shape=(nnz,), dtype=wdtype)
-    v_indices = relay.var(name + "_indices", shape=(nnz,), dtype="int32")
-    v_indptr = relay.var(name + "_indptr", shape=(N + 1,), dtype="int32")
-    return CSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, density=density)
-
 def to_bsr(v, density=0.04):
     name = v.name_hint
     (N, K) = v.type_annotation.concrete_shape
     nnz = num_nonzeros
     num_blocks = int(nnz / (BS_R * BS_C)) + 1
     v_data = relay.var(name + "_data", shape=(num_blocks, BS_R, BS_C), dtype=wdtype)
-    v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype="int32")
+    v_indices = relay.var(name + "_indices", shape=(num_blocks,), dtype=witype)
     v_indptr = relay.var(name + "_indptr", shape=(N // BS_R + 1,), dtype="int32")
     return BSR(data=v_data, indices=v_indices, indptr=v_indptr, N=N, K=K, BS_R=BS_R, BS_C=BS_C, density=density)
 
@@ -134,7 +129,7 @@ def instantiate(param):
     elif isinstance(param, BSR):
         return [
             (param.data.name_hint, tvm.nd.array(bsr_m.data.astype(wdtype), ctx)),
-            (param.indices.name_hint, tvm.nd.array(bsr_m.indices.astype("int32"), ctx)),
+            (param.indices.name_hint, tvm.nd.array(bsr_m.indices.astype(witype), ctx)),
             (param.indptr.name_hint, tvm.nd.array(bsr_m.indptr.astype("int32"), ctx)),
         ]
     else:
@@ -240,7 +235,7 @@ ro = tvm.nd.empty([M, N])
 module.get_output(0, ro)
 tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
 
-ftimer = module.module.time_evaluator("run", ctx, 10)
+ftimer = module.module.time_evaluator("run", ctx, 10000)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)

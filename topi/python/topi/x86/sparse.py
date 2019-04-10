@@ -17,6 +17,7 @@ def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
 def tvm_from_bf16(x):
     return tvm.call_pure_intrin("float32", "reinterpret", x.astype("uint32") << 16)
 
+
 def specify_range(cfg, prefix, num):
     for i in range(num):
         cfg.define_knob(prefix + str(num) + "_" + str(i), range(i+1))
@@ -35,7 +36,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
         (M, NK, BS_C_1) = topi.util.get_const_tuple(data.shape)
         assert BS_C == BS_C_1
     oshape = (M, NB * BS_R)
-    assert weight_indices.dtype == "int32", weight_indices.dtype
+    assert weight_indices.dtype in ("int32", "uint16"), weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
     assert weight_data.dtype in ("float32", "uint16")
     NUM_AXIS = 4
