@@ -8,7 +8,6 @@ from tvm.autotvm.task.space import OtherOptionEntity, ReorderEntity
 @autotvm.register_topi_compute(nn.sdense, 'cpu', ['direct'])
 def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
                  data_layout="NI", kernel_layout="OI", out_layout=""):
-
     if data_layout == "NI" and kernel_layout == "OI":
         return sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr)
     else:
@@ -161,6 +160,7 @@ def reorder_axes(cfg, prefix, axes):
 
 def schedule_sdense_mknk(s, cfg, op, out):
     # import pdb; pdb.set_trace()
+    (mo, no) = s[op].op.axis
     op_o = op.output(0)
     Y = op.input_tensors[0]
     Y_op = s[Y].op
@@ -171,6 +171,9 @@ def schedule_sdense_mknk(s, cfg, op, out):
     BS_C = get_const_int(bs_c.dom.extent)
     BS_R = get_const_int(Y.shape[2])
     BF = None
+    # fix it for now
+    s[Y].compute_at(s[op], no)
+    s[op].vectorize(no)
     if cfg['rfactor_bs_c'].val is True:
         # import pdb; pdb.set_trace()
         BF = s.rfactor(Y, bs_c, factor_axis=2)
@@ -202,13 +205,16 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["unroll_axis"].val >= 0 and \
                 new_axis[cfg["unroll_axis"].val] != elem_idx:
             s[Y].unroll(new_axis[cfg["unroll_axis"].val])
-    '''
     if op != out:
-        (yo, yi) = s[out].split(s[out].op.axis[0], 32)
+        d = s[out].op.axis
+        split_axis = d[0]
+        if len(d) > 1:
+            if d[0].dom.extent == 1 or (d[0].dom.extent < 32 and d[1].dom.extent > 32):
+                split_axis = d[1]
+        (yo, yi) = s[out].split(split_axis, 32)
         s[op_o].compute_at(s[out], yo)
         s[Y].compute_at(s[out], yo)
         s[out].vectorize(yi)
-    '''
 
 @generic.schedule_sparse_dense.register(["cpu"])
 def schedule_sparse_dense(outs):
