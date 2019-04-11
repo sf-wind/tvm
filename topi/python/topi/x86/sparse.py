@@ -171,9 +171,7 @@ def schedule_sdense_mknk(s, cfg, op, out):
     BS_C = get_const_int(bs_c.dom.extent)
     BS_R = get_const_int(Y.shape[2])
     BF = None
-    # fix it for now
-    s[Y].compute_at(s[op], no)
-    s[op].vectorize(no)
+
     if cfg['rfactor_bs_c'].val is True:
         # import pdb; pdb.set_trace()
         BF = s.rfactor(Y, bs_c, factor_axis=2)
@@ -205,7 +203,11 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["unroll_axis"].val >= 0 and \
                 new_axis[cfg["unroll_axis"].val] != elem_idx:
             s[Y].unroll(new_axis[cfg["unroll_axis"].val])
+
     if op != out:
+        # fix it for now
+        s[Y].compute_at(s[op], no)
+        s[op].vectorize(no)
         d = s[out].op.axis
         split_axis = d[0]
         if len(d) > 1:

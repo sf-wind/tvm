@@ -58,7 +58,7 @@ def sparse_dense_bsrmv(data, weight_data, weight_indices, weight_indptr):
         c = tvm.reduce_axis((0, BS_C), name="c")
         j = weight_indices[jj]
         block_ij_val = weight_data[jj][r][c]
-        assert weight_data.dtype in ("float32", "uint16")
+        assert weight_data.dtype in ("float32", "uint16", "int8")
         if weight_data.dtype == "uint16":
             block_ij_val = tvm_from_bf16(block_ij_val)
 
