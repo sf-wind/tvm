@@ -209,7 +209,9 @@ def schedule_sdense_mknk(s, cfg, op, out):
         d = s[out].op.axis
         split_axis = d[0]
         if len(d) > 1:
-            if d[0].dom.extent == 1 or (d[0].dom.extent < 32 and d[1].dom.extent > 32):
+            d0 = get_const_int(d[0].dom.extent)
+            d1 = get_const_int(d[1].dom.extent)
+            if d0 == 1 or ((d0 < 32) and (d1 > 32)):
                 split_axis = d[1]
         (yo, yi) = s[out].split(split_axis, 32)
         s[op_o].compute_at(s[out], yo)
