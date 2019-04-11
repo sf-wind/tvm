@@ -37,7 +37,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     oshape = (M, NB * BS_R)
     assert weight_indices.dtype in ("int32", "uint16"), weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
-    assert weight_data.dtype in ("float32", "uint16")
+    assert weight_data.dtype in ("float32", "uint16", "int8")
     NUM_AXIS = 4
     specify_range(cfg, 'axis_', NUM_AXIS)
     cfg.define_knob('rfactor_bs_c', [False, True])

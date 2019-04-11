@@ -29,7 +29,7 @@ parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--wdtype", type=str, default="uint16",
-                    choices=["float32", "uint16", "compare"])
+                    choices=["float32", "uint16", "int8", "compare"])
 parser.add_argument("--witype", type=str, default="int32",
                     choices=["int32", "uint16", "compare"])
 parser.add_argument("--sdense", type=str, default="False",
@@ -45,8 +45,8 @@ if args.debug:
 else:
     import tvm.contrib.graph_runtime as graph_runtime
 
-wdtype = "uint16" if args.wdtype == "uint16" else "float32"
-witype = "uint16" if args.witype == "uint16" else "int32"
+wdtype = args.wdtype
+witype = args.witype
 
 def sparsify(arr, BS_R, BS_C, density):
     (M, N) = arr.shape
@@ -353,7 +353,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
         v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
         v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
-        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
+        params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
         params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
         params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
@@ -448,6 +448,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
         r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
         module = graph_runtime.create(graph, rlib, ctx)
+        # print(rlib.get_source('asm'))
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
         ftimer = module.module.time_evaluator("run", ctx, number=10000)
@@ -594,7 +595,7 @@ def test(target):
         args0["wdtype"] = args.wdtype
         args1["wdtype"] = args.wdtype
     else:
-        args0["wdtype"] = "float32"
+        args0["wdtype"] = "int8"
         args1["wdtype"] = "uint16"
     if args.witype != "compare":
         args0["witype"] = args.witype
@@ -612,7 +613,14 @@ def test(target):
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
     print(args1)
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
-
+    print(args0)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
+    print(args1)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
+    print(args0)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
+    print(args1)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
 
 def skylake():
     (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", profile=True)
