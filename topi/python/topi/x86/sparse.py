@@ -44,7 +44,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     cfg.define_knob('rfactor_bs_c', [False, True])
     cfg.define_knob('align_data', [False, True] if len(data.shape) == 2 and BS_C > 1 and K > BS_C else [False])
     cfg.define_knob('vectorize_axis', range(-1, NUM_AXIS, 1))
-    cfg.define_knob('parallel_axis', range(-1, NUM_AXIS, 1))
+    cfg.define_knob('parallel_axis', [False, True])
     cfg.define_knob('unroll_axis', range(-1, NUM_AXIS, 1))
     '''
     cfg.define_knob('rfactor_bs_c', [False])
@@ -97,7 +97,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
         for i in range(NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
-        cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(False)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
     elif M == 1 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -105,7 +105,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
         for i in range(NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(2)
-        cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(True)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
     elif M == 8 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -115,7 +115,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
         cfg["axis_4_2"] = OtherOptionEntity(2)
         cfg["axis_4_3"] = OtherOptionEntity(2)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
-        cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(False)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
     else:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -123,7 +123,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
         for i in range(NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
-        cfg["parallel_axis"] = OtherOptionEntity(-1)
+        cfg["parallel_axis"] = OtherOptionEntity(False)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
 
 
@@ -192,9 +192,6 @@ def schedule_sdense_mknk(s, cfg, op, out):
         if cfg["vectorize_axis"].val >= 0 and \
                 new_axis[cfg["vectorize_axis"].val] != felem_idx:
             s[BF].vectorize(new_axis[cfg["vectorize_axis"].val])
-        if cfg["parallel_axis"].val >= 0 and \
-                new_axis[cfg["parallel_axis"].val] != felem_idx:
-            s[BF].parallel(new_axis[cfg["parallel_axis"].val])
         if cfg["unroll_axis"].val >= 0 and \
                 new_axis[cfg["unroll_axis"].val] != elem_idx:
             s[BF].unroll(new_axis[cfg["unroll_axis"].val])
@@ -230,7 +227,7 @@ def schedule_sdense_mknk(s, cfg, op, out):
         s[out].vectorize(yi)
         # s[out].unroll(yo)
         SPLIT_NUM = get_const_int(split_axis.dom.extent)
-        if SPLIT_NUM < 4 * 32:
+        if SPLIT_NUM < 4 * 32 or cfg["parallel_axis"].val is False:
             yoi = yo
         else:
             (yoo, yoi) = s[out].split(yo, nparts=4)
