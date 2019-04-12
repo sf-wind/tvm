@@ -35,9 +35,10 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
         (M, NK, BS_C_1) = topi.util.get_const_tuple(data.shape)
         assert BS_C == BS_C_1
     oshape = (M, NB * BS_R)
+    assert data.dtype in ("float32", "uint16"), data.dtype
     assert weight_indices.dtype in ("int32", "uint16"), weight_indices.dtype
     assert weight_indptr.dtype == "int32", weight_indptr.dtype
-    assert weight_data.dtype in ("float32", "uint16", "int8")
+    assert weight_data.dtype in ("float32", "uint16", "int8"), weight_data.dtype
     NUM_AXIS = 4
     specify_range(cfg, 'axis_', NUM_AXIS)
     cfg.define_knob('rfactor_bs_c', [False, True])
@@ -73,6 +74,10 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
             x_val = X[i, weight_indices[elem], bs_c]
         else:
             x_val = X[i, weight_indices[elem] * BS_C + bs_c]
+        if data.dtype == "uint16":
+            x_val = tvm_from_bf16(x_val)
+        else:
+            x_val = x_val.astype("float32")
         return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
     Y = tvm.compute((M, NB, BS_R), f,
         name="sdense_kmnk_block",
@@ -171,7 +176,11 @@ def schedule_sdense_mknk(s, cfg, op, out):
     BS_C = get_const_int(bs_c.dom.extent)
     BS_R = get_const_int(Y.shape[2])
     BF = None
-
+    '''
+    s[Y].prefetch(Y_op.input_tensors[1], elem_idx, 2)
+    s[Y].prefetch(Y_op.input_tensors[2], elem_idx, 2)
+    s[Y].prefetch(Y_op.input_tensors[3], elem_idx, 2)
+    '''
     if cfg['rfactor_bs_c'].val is True:
         # import pdb; pdb.set_trace()
         BF = s.rfactor(Y, bs_c, factor_axis=2)
@@ -216,9 +225,21 @@ def schedule_sdense_mknk(s, cfg, op, out):
             if d0 == 1 or ((d0 < 32) and (d1 > 32)):
                 split_axis = d[1]
         (yo, yi) = s[out].split(split_axis, 32)
-        s[op_o].compute_at(s[out], yo)
-        s[Y].compute_at(s[out], yo)
+        # s[op_o].compute_at(s[out], yo)
+        # s[Y].compute_at(s[out], yo)
         s[out].vectorize(yi)
+        # s[out].unroll(yo)
+        SPLIT_NUM = get_const_int(split_axis.dom.extent)
+        if SPLIT_NUM < 4 * 32:
+            yoi = yo
+        else:
+            (yoo, yoi) = s[out].split(yo, nparts=4)
+            s[out].parallel(yoo)
+        s[out].unroll(yoi)
+        s[op_o].compute_at(s[out], yoi)
+        s[Y].compute_at(s[out], yoi)
+    else:
+        s[out].unroll(mo)
 
 @generic.schedule_sparse_dense.register(["cpu"])
 def schedule_sparse_dense(outs):
