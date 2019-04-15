@@ -1,5 +1,4 @@
 import logging
-# logging.basicConfig(level=logging.DEBUG)
 
 import torch
 from torch import nn
@@ -34,6 +33,10 @@ parser.add_argument("--witype", type=str, default="int32",
                     choices=["int32", "uint16", "compare"])
 parser.add_argument("--sdense", type=str, default="False",
                     choices=["False", "True", "compare"])
+parser.add_argument("--graph", type=str)
+parser.add_argument("--lib", type=str)
+parser.add_argument("--params", type=str)
+
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -42,6 +45,7 @@ if args.num_threads > 0:
 
 if args.debug:
     from tvm.contrib.debugger import debug_runtime as graph_runtime
+    logging.basicConfig(level=logging.DEBUG)
 else:
     import tvm.contrib.graph_runtime as graph_runtime
 
@@ -263,6 +267,78 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
+def build_merged_wavernn_module(target="llvm"):
+    Ifactored = nn.Linear(1, rnn_dims)
+    Ifactored.weight[:, :] = I.weight[:, :1]
+    Ifactored.bias[:] = I.bias[:]
+
+    fc1factored = nn.Linear(rnn_dims, fc_dims)
+    fc1factored.weight[:, :] = fc1.weight[:, :rnn_dims]
+    fc1factored.bias[:] = fc1.bias[:]
+
+    params = {
+        "I_W": tvm.ndarray.array(Ifactored.weight.detach().numpy()),
+        "I_B": tvm.ndarray.array(Ifactored.bias.detach().numpy()),
+        "rnn1_weight_ih": tvm.ndarray.array(rnn1.weight_ih.detach().numpy()),
+        "rnn1_weight_hh": tvm.ndarray.array(rnn1.weight_hh.detach().numpy()),
+        "rnn1_bias_ih": tvm.ndarray.array(rnn1.bias_ih.detach().numpy()),
+        "rnn1_bias_hh": tvm.ndarray.array(rnn1.bias_hh.detach().numpy()),
+        "fc1_W": tvm.ndarray.array(fc1factored.weight.detach().numpy()),
+        "fc1_B": tvm.ndarray.array(fc1factored.bias.detach().numpy()),
+        "fc2_W": tvm.ndarray.array(fc2.weight.detach().numpy()),
+        "fc2_B": tvm.ndarray.array(fc2.bias.detach().numpy()),
+    }
+
+    Rx = relay.var("x", shape=[1, 1], dtype="float32")
+    Rh1 = relay.var("h1", shape=[1, rnn_dims], dtype="float32")
+    RI_residual = relay.var("I_residual", shape=[1, rnn_dims], dtype="float32")
+    Rfc1_residual = relay.var("fc1_residual", shape=[1, fc_dims], dtype="float32")
+    RI_W = relay.var("I_W", shape=(rnn_dims, 1), dtype="float32")
+    RI_B = relay.var("I_B", shape=(rnn_dims,), dtype="float32")
+
+    Cell = collections.namedtuple('Cell', ['weight_ih', 'weight_hh', 'bias_ih', 'bias_hh'])
+
+    def dense(X, W, B, **kwargs):
+        return relay.nn.bias_add(relay.nn.dense(X, W), B)
+
+    def gru_cell(cell, x, h):
+        xt = dense(x, cell.weight_ih, cell.bias_ih)
+        ht = dense(h, cell.weight_hh, cell.bias_hh)
+        xt_gates = relay.split(xt, indices_or_sections=3, axis=1)
+        ht_gates = relay.split(ht, indices_or_sections=3, axis=1)
+        reset_gate = relay.sigmoid(xt_gates[0] + ht_gates[0])
+        input_gate = relay.sigmoid(xt_gates[1] + ht_gates[1])
+        new_gate = relay.tanh(xt_gates[2] + reset_gate * ht_gates[2])
+        return new_gate + input_gate * (h - new_gate)
+
+    xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
+
+    Rrnn1 = Cell(
+        w_xz =relay.var("rnn1_w_xz", shape=(2 * rnn_dims, rnn_dims), dtype="float32"),
+        w_n=relay.var("rnn1_w_n", shape=(rnn_dims, rnn_dims), dtype="float32"),
+        bias_xz=relay.var("rnn1_bias_xz", shape=(2 * rnn_dims, ), dtype="float32"),
+        bias_n=relay.var("rnn1_bias_n", shape=(rnn_dims, ), dtype="float32"),
+    )
+    h1 = gru_cell(Rrnn1, xconcat_trns, Rh1)
+    xres = xconcat_trns + h1
+
+    Rfc1_W = relay.var("fc1_W", shape=(fc_dims, rnn_dims), dtype="float32")
+    Rfc1_B = relay.var("fc1_B", shape=(fc_dims,), dtype="float32")
+
+    x_fc = relay.nn.relu(dense(xres, Rfc1_W, Rfc1_B) + Rfc1_residual)
+
+    Rfc2_W = relay.var("fc2_W", shape=(n_classes, fc_dims), dtype="float32")
+    Rfc2_B = relay.var("fc2_B", shape=(n_classes,), dtype="float32")
+
+    x_prob = relay.nn.softmax(dense(x_fc, Rfc2_W, Rfc2_B))
+
+    outputs = relay.expr.Tuple([x_prob, h1])
+    func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+    func = relay.ir_pass.infer_type(func)
+    graph, lib, params = relay.build_module.build(func, target=target, params=params)
+    return (graph, lib, params)
+
+
 def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sdense="False", tune=False, profile=False):
     Ifactored = nn.Linear(1, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :1]
@@ -448,7 +524,206 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
         r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
         module = graph_runtime.create(graph, rlib, ctx)
-        # print(rlib.get_source('asm'))
+        if args.debug:
+            print(rlib.get_source('asm'))
+        module.set_input(**r_new_params)
+        module.set_input(**r_inputs)
+        ftimer = module.module.time_evaluator("run", ctx, number=10000)
+        for i in range(5):
+            prof_res = ftimer()
+            print("TVM time: {:.2f}us".format(prof_res.mean * 10 ** 6))
+        module.run()
+        module.run()
+
+    return (graph, lib, new_params)
+
+def build_faster_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sdense="False", tune=False, profile=False):
+    Ifactored = nn.Linear(1, rnn_dims)
+    Ifactored.weight[:, :] = I.weight[:, :1]
+    Ifactored.bias[:] = I.bias[:]
+
+    fc1factored = nn.Linear(rnn_dims, fc_dims)
+    fc1factored.weight[:, :] = fc1.weight[:, :rnn_dims]
+    fc1factored.bias[:] = fc1.bias[:]
+
+    params = {
+        "I_W": tvm.ndarray.array(Ifactored.weight.detach().numpy()),
+        "I_B": tvm.ndarray.array(Ifactored.bias.detach().numpy()),
+        "rnn1_weight_ih": tvm.ndarray.array(rnn1.weight_ih.detach().numpy()),
+        "rnn1_weight_hh": tvm.ndarray.array(rnn1.weight_hh.detach().numpy()),
+        "rnn1_bias_ih": tvm.ndarray.array(rnn1.bias_ih.detach().numpy()),
+        "rnn1_bias_hh": tvm.ndarray.array(rnn1.bias_hh.detach().numpy()),
+        "fc1_B": tvm.ndarray.array(fc1factored.bias.detach().numpy()),
+        "fc2_W": tvm.ndarray.array(fc2.weight.detach().numpy()),
+        "fc2_B": tvm.ndarray.array(fc2.bias.detach().numpy()),
+    }
+
+    Rx = relay.var("x", shape=[1, 1], dtype="float32")
+    Rh1 = relay.var("h1", shape=[1, rnn_dims], dtype="float32")
+    RI_residual = relay.var("I_residual", shape=[1, rnn_dims], dtype="float32")
+    Rfc1_residual = relay.var("fc1_residual", shape=[1, fc_dims], dtype="float32")
+    RI_W = relay.var("I_W", shape=(rnn_dims, 1), dtype="float32")
+    RI_B = relay.var("I_B", shape=(rnn_dims,), dtype="float32")
+
+    Cell = collections.namedtuple('Cell', ['weight_ih', 'weight_hh', 'bias_ih', 'bias_hh'])
+
+    BSR = collections.namedtuple(
+        'BSR',
+        ['data', 'indices', 'indptr',])
+
+    def approx_exp(x):
+        x = relay.minimum(relay.maximum(x, C(-88.0)), C(88.0))
+        x = C(127.0) + x * C(1.44269504)
+        xf = relay.floor(x)
+        i = relay.cast(xf, "int32")
+        x = x - xf
+        Y = C(0.99992522) + x * (C(0.69583354) + x * (C(0.22606716) + x * C(0.078024523)))
+        exponent = relay.left_shift(i, relay.expr.const(23, "int32"))
+        exponent = relay.reinterpret(exponent, "float32")
+        return exponent * Y
+
+    def approx_sigmoid(x):
+        y = approx_exp(x)
+        return y / (y + C(1.0))
+
+    def approx_tanh(x):
+        x = x * C(2.0)
+        y = approx_exp(x)
+        return (y - C(1.0)) / (y + C(1.0))
+
+    def C(x):
+        return relay.expr.const(x, "float32")
+
+    def sparse_dense(X, W, B, **kwargs):
+        if sdense == "True":
+            d = relay.nn.sdense(X, W)
+        else:
+            d = relay.nn.sparse_dense(X, W)
+        return relay.nn.bias_add(d, B)
+
+    def dense(X, W, B, **kwargs):
+        return relay.nn.bias_add(relay.nn.dense(X, W), B)
+
+    def gru_cell(cell, x, h):
+        xt = sparse_dense(x, cell.weight_ih, cell.bias_ih)
+        ht = sparse_dense(h, cell.weight_hh, cell.bias_hh)
+        xt_gates = relay.split(xt, indices_or_sections=3, axis=1)
+        ht_gates = relay.split(ht, indices_or_sections=3, axis=1)
+        reset_gate = approx_sigmoid(xt_gates[0] + ht_gates[0])
+        input_gate = approx_sigmoid(xt_gates[1] + ht_gates[1])
+        new_gate = approx_tanh(xt_gates[2] + reset_gate * ht_gates[2])
+        return new_gate + input_gate * (h - new_gate)
+
+    def to_bf16(x):
+        assert x.dtype == np.float32
+        return ((x.view('<u4') + 2 ** 15) >> 16).astype("uint16")
+
+    def to_sparse(v, arr, BS_R=16, BS_C=1):
+        name = v.name_hint
+        (N, K) = v.type_annotation.concrete_shape
+        assert (N, K) == arr.shape
+        sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
+        # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
+        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
+        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
+        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
+        params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
+        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
+        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
+        return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
+
+    xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
+
+    Rrnn1 = Cell(
+        weight_ih=to_sparse(relay.var("rnn1_weight_ih", shape=(3 * rnn_dims, rnn_dims), dtype="float32"), rnn1.weight_ih.detach().numpy()),
+        weight_hh=to_sparse(relay.var("rnn1_weight_hh", shape=(3 * rnn_dims, rnn_dims), dtype="float32"), rnn1.weight_hh.detach().numpy()),
+        bias_ih=relay.var("rnn1_bias_ih", shape=(3 * rnn_dims, ), dtype="float32"),
+        bias_hh=relay.var("rnn1_bias_hh", shape=(3 * rnn_dims, ), dtype="float32"),
+    )
+    h1 = gru_cell(Rrnn1, xconcat_trns, Rh1)
+    xres = xconcat_trns + h1
+
+    Rfc1_W = to_sparse(relay.var("fc1_W", shape=(fc_dims, rnn_dims), dtype="float32"), fc1factored.weight.detach().numpy())
+    Rfc1_B = relay.var("fc1_B", shape=(fc_dims,), dtype="float32")
+
+    x_fc = relay.nn.relu(sparse_dense(xres, Rfc1_W, Rfc1_B) + Rfc1_residual)
+
+    Rfc2_W = to_sparse(relay.var("fc2_W", shape=(n_classes, fc_dims), dtype="float32"), fc2.weight.detach().numpy())
+    Rfc2_B = relay.var("fc2_B", shape=(n_classes,), dtype="float32")
+
+    x_prob_unnorm = approx_exp(sparse_dense(x_fc, Rfc2_W, Rfc2_B))
+
+    x_prob_sum = relay.sum(x_prob_unnorm, axis=-1)
+    x_prob = x_prob_unnorm / x_prob_sum
+    outputs = relay.expr.Tuple([x_prob, h1])
+    func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+    func = relay.ir_pass.infer_type(func)
+    # print(func.astext())
+    TARGET = tvm.target.create(target)
+    log_filename = "lpcnet_no_bf16_autotvm_skl.log"
+
+    if tune:
+        with relay.build_config(opt_level=2):
+            func = relay.optimize(func, target=TARGET, params=params)
+            # print(func.astext(show_meta_data=False))
+            tasks = autotvm.task.extract_from_program(
+                func, target=TARGET, params=params, ops=(relay.op.nn.dense,))
+            for i, tsk in enumerate(tasks):
+                # print(tsk)
+                prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
+
+                tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
+                n_trial = 100
+                early_stopping = 200
+                measure_option = autotvm.measure_option(
+                    builder=autotvm.LocalBuilder(),
+                    runner=autotvm.LocalRunner(number=100, repeat=3,
+                                               min_repeat_ms=1000),
+                )
+
+                tuner_obj.tune(
+                    n_trial=min(n_trial, len(tsk.config_space)),
+                    early_stopping=early_stopping,
+                    measure_option=measure_option,
+                    callbacks=[
+                        autotvm.callback.progress_bar(n_trial, prefix=prefix),
+                        autotvm.callback.log_to_file(log_filename)
+                    ]
+                )
+
+    with autotvm.apply_history_best(log_filename):
+        with relay.build_config(opt_level=3):
+            func = relay.optimize(func, target=TARGET, params=params)
+            func = relay.ir_pass.infer_type(func)
+            graph, lib, new_params = relay.build_module.build(
+                func, target=TARGET,  params=params)
+
+        # profile
+        tmp = tvm.contrib.util.tempdir()
+        lib_fname = tmp.relpath('net.tar')
+        with TARGET:
+            lib.export_library(lib_fname)
+        # tracker = tvm.rpc.connect_tracker('0.0.0.0', 9198)
+        # remote = tracker.request('skl')
+
+    if profile:
+        # remote.upload(lib_fname)
+        rlib = lib
+        ctx = tvm.context(target, 0)
+        # rlib = remote.load_module('net.tar')
+        # ctx = remote.cpu(0)
+        r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
+        inputs = {
+            "x": tvm.nd.array(np.random.randn(1, 1).astype(np.float32)),
+            "h1": tvm.nd.array(np.random.randn(1, rnn_dims).astype(np.float32)),
+            "I_residual": tvm.nd.array(np.random.randn(1, rnn_dims).astype(np.float32)),
+            "fc1_residual": tvm.nd.array(np.random.randn(1, rnn_dims).astype(np.float32)),
+        }
+        r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
+        r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
+        module = graph_runtime.create(graph, rlib, ctx)
+        if args.debug:
+            print(rlib.get_source('asm'))
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
         ftimer = module.module.time_evaluator("run", ctx, number=10000)
@@ -623,7 +898,7 @@ def test(target):
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
 
 def skylake():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense="True", profile=True)
     with open(
             "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -635,9 +910,14 @@ def skylake():
         f.write(relay.save_param_dict(params))
 
     lib.save("skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
+    with open(
+            "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.so".format(**globals()),
+            "wb") as f:
+        lib.export_library(f.name)
 
 def haswell():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu", profile=True)
+    # import pdb; pdb.set_trace()
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense="True", profile=True)
     with open(
             "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -649,9 +929,71 @@ def haswell():
         f.write(relay.save_param_dict(params))
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
+    with open(
+            "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.so".format(**globals()),
+            "wb") as f:
+        lib.export_library(f.name)
 
-test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
+def load_tvm(graph_name, lib_name, params_name):
+    with open(graph_name, "r") as f:
+        graph = f.read()
+    lib = tvm.module.load(lib_name)
+    with open(params_name, "rb") as f:
+        params = relay.load_param_dict(f.read())
+    return (graph, lib, params)
+
+def exec_loaded_tvm():
+    graph_name = args.graph
+    lib_name = args.lib
+    params_name = args.params
+    with open(graph_name, "r") as f:
+        graph = f.read()
+    with open(params_name, "rb") as f:
+        serialized_params = f.read()
+
+    tvm_random_seed(10)
+    T = a1.shape[1]
+    (graph, lib, params) = load_tvm(graph_name, lib_name, params_name)
+    import tempfile
+    with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
+        lib.export_library(lib_f.name)
+    I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
+    fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
+
+    frame_func = tvm.get_global_func("tvm.contrib.wavernn.frame")
+
+    outs = tvm.ndarray.array(np.random.randn(T).astype("float32"))
+    h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
+    frame_func(
+        # Inputs
+        tvm.ndarray.array(I_residual),
+        tvm.ndarray.array(fc1_residual),
+        tvm.ndarray.array(x_0),
+        tvm.ndarray.array(h1_0),
+        # Outputs
+        outs,
+        h1,
+        # Temporary storage to make entire frame_func allocation free.
+        tvm.ndarray.array(np.random.randn(1, n_classes).astype("float32")),
+        tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32")),
+        tvm.ndarray.array(np.random.randn(1, fc_dims).astype("float32")),
+        # Data for constructing the module.
+        graph,  # the graph JSON.
+        lib_name,  # the exported shared object.
+        serialized_params  # the serialized parameters.
+    )
+    return outs.asnumpy(), h1.asnumpy()
+
+def test_load():
+    with torch.no_grad():
+        outs_ref, h1_ref = reference()
+        outs_new, h1_new = exec_loaded_tvm()
+        np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
+
+# test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
 # test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
 # skylake()
-# haswell()
+haswell()
+# test_load()

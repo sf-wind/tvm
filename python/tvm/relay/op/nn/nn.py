@@ -812,8 +812,18 @@ def sparse_dense_mknk(data, weight):
 def sdense(data, weight):
     return _make.sdense(data, weight.data, weight.indices,
                                         weight.indptr)
-def sparse_dense(data, weight):
-    return _make.sparse_dense(data, weight.data, weight.indices, weight.indptr)
+
+def grucell(input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn):
+    return _make.grucell(input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn)
+
+def sgrucell(input, w_x, b_x, \
+    w_z, b_z, \
+    w_in, b_in, \
+    w_hn, b_hn):
+    return _make.sgrucell(input, w_x.data, w_x.indices, w_x.indptr, b_x, \
+        w_z.data, w_z.indices, w_z.indptr, b_z, \
+        w_in.data, w_in.indices, w_in.indptr, b_in, \
+        w_hn.data, w_hn.indices, w_hn.indptr, b_hn)
 
 
 def gru_gates(input_transform, hidden_transform):

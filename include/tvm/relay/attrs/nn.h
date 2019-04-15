@@ -359,6 +359,16 @@ struct SDenseAttrs : public tvm::AttrsNode<SDenseAttrs> {
   TVM_DECLARE_ATTRS(SDenseAttrs, "relay.attrs.SDenseAttrs") {}
 };
 
+/*! \brief Attributes for dense operator */
+struct GRUCellAttrs : public tvm::AttrsNode<GRUCellAttrs> {
+  TVM_DECLARE_ATTRS(GRUCellAttrs, "relay.attrs.GRUCellAttrs") {}
+};
+
+/*! \brief Attributes for dense operator */
+struct SGRUCellAttrs : public tvm::AttrsNode<SGRUCellAttrs> {
+  TVM_DECLARE_ATTRS(SGRUCellAttrs, "relay.attrs.SGRUCellAttrs") {}
+};
+
 struct GRUGatesAttrs : public tvm::AttrsNode<GRUGatesAttrs> {
   TVM_DECLARE_ATTRS(GRUGatesAttrs, "relay.attrs.GRUGatesAttrs") {}
 };

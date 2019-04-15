@@ -270,3 +270,19 @@ def sdense_default(data, weight_data, weight_indices, weight_indptr):
 def sdense(data, weight_data, weight_indices, weight_indptr,
            data_layout="NI", kernel_layout="OI", out_layout=""):
     return sdense_default(data, weight_data, weight_indices, weight_indptr)
+
+
+@tvm.target.override_native_generic_func("grucell")
+def grucell(input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn,
+           data_layout="NI", kernel_layout="OI", out_layout=""):
+    assert False
+    return None
+
+@tvm.target.override_native_generic_func("sgrucell")
+def sgrucell(input, w_x_data, w_x_indices, w_x_indptr, b_x,
+    w_z_data, w_z_indices, w_z_indptr, b_z,
+    w_in_data, w_in_indices, w_in_indptr, b_in,
+    w_hn_data, w_hn_indices, w_hn_indptr, b_hn,
+           data_layout="NI", kernel_layout="OI", out_layout=""):
+    assert False
+    return None

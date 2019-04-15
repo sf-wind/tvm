@@ -4,6 +4,7 @@ import tvm
 from tvm import autotvm
 from .util import get_fp32_len
 from tvm.autotvm.task.space import OtherOptionEntity, ReorderEntity
+import topi
 
 @autotvm.register_topi_compute(nn.sdense, 'cpu', ['direct'])
 def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
@@ -470,4 +471,286 @@ def schedule_sparse_dense_mknk(outs):
     # A1, A2, A3, A4 = A.op.input_tensors
     # print(tvm.lower(s, [A1, A2, A3, A4, B, C], simple_mode=True))
 
+    return s
+
+
+@autotvm.register_topi_compute(nn.grucell, 'cpu', ['direct'])
+def grucell(cfg, input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn,
+                 data_layout="NI", kernel_layout="OI", out_layout=""):
+    (BATCH, XH) = topi.util.get_const_tuple(input.shape)
+    (H, X) = topi.util.get_const_tuple(tw_in.shape)
+    assert XH == X + H
+    (tmp,) = topi.util.get_const_tuple(tb_in.shape)
+    assert tmp == H
+    (htmp, xtmp) = topi.util.get_const_tuple(tw_hn.shape)
+    assert xtmp == X
+    assert htmp == H
+    (tmp,) = topi.util.get_const_tuple(tb_hn.shape)
+    assert tmp == H
+
+    (htmp, xhtmp) = topi.util.get_const_tuple(tw_x.shape)
+    assert xhtmp == XH
+    assert htmp == H
+    (tmp,) = topi.util.get_const_tuple(tb_x.shape)
+    assert tmp == H
+    (htmp, xhtmp) = topi.util.get_const_tuple(tw_z.shape)
+    assert xhtmp == XH
+    assert htmp == H
+    (tmp,) = topi.util.get_const_tuple(tb_z.shape)
+    assert tmp == H
+
+    def approx_sigmoid(v):
+        x = tvm.abs(v)
+        x2 = v * v
+        e = 1.0 + x + x2 * 0.5658 + 0.143 * x2 * x2
+        e_pos = e / (1.0 + e)
+        e_neg = 1 / (1.0 + e)
+
+        return tvm.if_then_else(v >= 0, e_pos, e_neg)
+
+    def approx_tanh(v):
+        x = tvm.abs(v)
+        x2 = v * v
+        ee = 1.0 + x + x2 * 0.5658 + 0.143 * x2 * x2
+        e = tvm.if_then_else(tvm.abs(ee) < 1e-8, 1e-8, ee)
+
+        def sign(x):
+            return tvm.if_then_else(v >= 0, 1, -1)
+
+        return sign(v) * (e - 1 / e) / (e + 1 / e)
+
+    oshape = (BATCH, H)
+    def mul_x(b, h):
+        r = tvm.reduce_axis((0, XH), name="xr")
+        return tvm.sum(input[b, r] * tw_x[h, r], axis=[r])
+
+    def mul_z(b, h):
+        r = tvm.reduce_axis((0, XH), name="zr")
+        return tvm.sum(input[b, r] * tw_z[h, r], axis=[r])
+
+    def mul_in(b, h):
+        r = tvm.reduce_axis((0, X), name="inr")
+        return tvm.sum(input[b, r] * tw_in[h, r], axis=[r])
+
+    def mul_hn(b, h):
+        r = tvm.reduce_axis((0, H), name="hnr")
+        return tvm.sum(input[b, X + r] * tw_hn[h, r], axis=[r])
+
+    # import pdb; pdb.set_trace()
+    R = tvm.compute(oshape, mul_x,
+        name="grucell_r", tag="grucell_r")
+    Z = tvm.compute(oshape, mul_z,
+        name="grucell_z", tag="grucell_z")
+    IN = tvm.compute(oshape, mul_in,
+        name="grucell_in", tag="grucell_in")
+    HN = tvm.compute(oshape, mul_hn,
+        name="grucell_hn", tag="grucell_hn")
+
+    def gru(b, h):
+        rr = R[b, h]
+        zz = Z[b, h]
+        hhn = HN[b, h]
+        iin = IN[b, h]
+        r = approx_sigmoid(rr + tb_x[h])
+        z = approx_sigmoid(zz + tb_z[h])
+        hn = hhn + tb_hn[h]
+        _in = iin + tb_in[h]
+        n = approx_tanh(r * hn + _in)
+        h_prime = (1 - z) * n + z * input[b, X + h]
+        return h_prime
+
+    return tvm.compute(oshape, gru,
+        name="grucell", tag="grucell")
+
+def schedule_grucell_default(s, cfg, op, out):
+    # import pdb; pdb.set_trace()
+    (b, h) = s[op].op.axis
+    Z = op.input_tensors[0]
+    R = op.input_tensors[2]
+    HN = op.input_tensors[4]
+    IN = op.input_tensors[6]
+    (ho, hi) = s[op].split(h, 1)
+    s[R].compute_at(s[op], hi)
+    s[Z].compute_at(s[op], hi)
+    s[IN].compute_at(s[op], hi)
+    s[HN].compute_at(s[op], hi)
+
+    def vec_reduction(Z):
+        (zb, zh) = s[Z].op.axis
+        (zr,) = s[Z].op.reduce_axis
+        # import pdb; pdb.set_trace()
+        (zro, zri) = s[Z].split(zr, 8)
+        ZF = s.rfactor(Z, zri, factor_axis=2)
+        (zfb, zfh, zfr) = s[ZF].op.axis
+        # (zfro, zfri) = s[ZF].split(zfr, 8)
+        s[ZF].vectorize(zfr)
+        # axis is modified
+        (zb, zh) = s[Z].op.axis
+        s[ZF].compute_at(s[Z], zh)
+
+    vec_reduction(Z)
+    vec_reduction(R)
+    vec_reduction(IN)
+    vec_reduction(HN)
+    # s[R].vectorize(zh)
+    # s[R].reorder(zh, zb)
+
+
+@autotvm.register_topi_schedule(generic.schedule_grucell, 'cpu', ['direct'])
+def schedule_grucell(cfg, outs):
+    outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
+    s = tvm.create_schedule([x.op for x in outs])
+    def _callback(op):
+        if op.tag == 'grucell':
+            schedule_grucell_default(s, cfg, op, outs[0].op)
+    traverse_inline(s, outs[0].op, _callback)
+    return s
+
+@autotvm.register_topi_compute(nn.sgrucell, 'cpu', ['direct'])
+def sgrucell(cfg, input, w_x_data, w_x_indices, w_x_indptr, b_x,
+             w_z_data, w_z_indices, w_z_indptr, b_z,
+             w_in_data, w_in_indices, w_in_indptr, b_in,
+             w_hn_data, w_hn_indices, w_hn_indptr, b_hn,
+             data_layout="NI", kernel_layout="OI", out_layout=""):
+    # import pdb; pdb.set_trace()
+    (BATCH, XH) = topi.util.get_const_tuple(input.shape)
+    (H,) = topi.util.get_const_tuple(b_x.shape)
+    (tmp, BS_R, BS_C) = topi.util.get_const_tuple(w_x_data.shape)
+    (NB_plus_1, ) = topi.util.get_const_tuple(w_x_indptr.shape)
+    NB = NB_plus_1 - 1
+    X = XH - H
+    assert H == NB * BS_R
+    oshape = (BATCH, H)
+
+
+    def approx_sigmoid(v):
+        x = tvm.abs(v)
+        x2 = v * v
+        e = 1.0 + x + x2 * 0.5658 + 0.143 * x2 * x2
+        e_pos = e / (1.0 + e)
+        e_neg = 1 / (1.0 + e)
+
+        return tvm.if_then_else(v >= 0, e_pos, e_neg)
+
+    def approx_tanh(v):
+        x = tvm.abs(v)
+        x2 = v * v
+        ee = 1.0 + x + x2 * 0.5658 + 0.143 * x2 * x2
+        e = tvm.if_then_else(tvm.abs(ee) < 1e-8, 1e-8, ee)
+
+        def sign(x):
+            return tvm.if_then_else(v >= 0, 1, -1)
+
+        return sign(v) * (e - 1 / e) / (e + 1 / e)
+
+    def f(i, nb, r, **kwargs):
+        bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
+        weight_indptr = kwargs["weight_indptr"]
+        weight_data = kwargs["weight_data"]
+        weight_indices = kwargs["weight_indices"]
+        input = kwargs["input"]
+        input_offset = kwargs["input_offset"] if "input_offset" in kwargs else 0
+        row_start = weight_indptr[nb]
+        row_end = weight_indptr[nb + 1]
+        row_elems = row_end - row_start
+        elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
+        elem = row_start + elem_idx
+        weight_val = weight_data[elem, r, bs_c]
+        if weight_data.dtype == "uint16":
+            weight_val = tvm_from_bf16(weight_val)
+        else:
+            weight_val = weight_val.astype("float32")
+        x_val = input[i, input_offset + weight_indices[elem] * BS_C + bs_c]
+        x_val = x_val.astype("float32")
+        return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
+
+    RB = tvm.compute((BATCH, NB, BS_R), f,
+        name="sgrucell_r_block", tag="sgrucell_r_block",
+        fcompute_kwargs={"input": input, "weight_data": w_x_data, "weight_indices": w_x_indices, "weight_indptr": w_x_indptr}
+        )
+    R = tvm.compute(oshape, lambda m, n: RB[m, n // BS_R, n % BS_R],
+        name="sgrucell_r", tag="sgrucell_r")
+
+    ZB = tvm.compute((BATCH, NB, BS_R), f,
+        name="sgrucell_z_block", tag="sgrucell_z_block",
+        fcompute_kwargs={"input": input, "weight_data": w_z_data, "weight_indices": w_z_indices, "weight_indptr": w_z_indptr}
+        )
+    Z = tvm.compute(oshape, lambda m, n: ZB[m, n // BS_R, n % BS_R],
+        name="sgrucell_z", tag="sgrucell_z")
+
+    INB = tvm.compute((BATCH, NB, BS_R), f,
+        name="sgrucell_in_block", tag="sgrucell_in_block",
+        fcompute_kwargs={"input": input, "weight_data": w_in_data, "weight_indices": w_in_indices, "weight_indptr": w_in_indptr}
+        )
+    IN = tvm.compute(oshape, lambda m, n: INB[m, n // BS_R, n % BS_R],
+        name="sgrucell_in", tag="sgrucell_in")
+
+    HNB = tvm.compute((BATCH, NB, BS_R), f,
+        name="sgrucell_hn_block", tag="sgrucell_hn_block",
+        fcompute_kwargs={"input": input, "input_offset": X, "weight_data": w_hn_data, "weight_indices": w_hn_indices, "weight_indptr": w_hn_indptr}
+        )
+    HN = tvm.compute(oshape, lambda m, n: HNB[m, n // BS_R, n % BS_R],
+        name="sgrucell_hn", tag="sgrucell_hn")
+
+    def gru(b, h):
+        rr = R[b, h]
+        zz = Z[b, h]
+        hhn = HN[b, h]
+        iin = IN[b, h]
+        r = approx_sigmoid(rr + b_x[h])
+        z = approx_sigmoid(zz + b_z[h])
+        hn = hhn + b_hn[h]
+        _in = iin + b_in[h]
+        n = approx_tanh(r * hn + _in)
+        h_prime = (1 - z) * n + z * input[b, X + h]
+        return h_prime
+
+    return tvm.compute(oshape, gru,
+        name="sgrucell", tag="sgrucell")
+
+
+def schedule_sgrucell_default(s, cfg, op, out):
+    # import pdb; pdb.set_trace()
+    (b, h) = s[op].op.axis
+    (ho, hi) = s[op].split(h, 16)
+    def schedule_block(Z):
+        BLOCK = Z.op.input_tensors[0]
+        (i, nb, r) = s[BLOCK].op.axis
+        (elem_idx, c) = s[BLOCK].op.reduce_axis
+        BS_R = get_const_int(r.dom.extent)
+        BS_C = get_const_int(c.dom.extent)
+        if BS_R > 1:
+            s[Z].compute_at(s[op], ho)
+            s[BLOCK].compute_at(s[op], ho)
+            s[BLOCK].vectorize(r)
+        elif BS_C > 0:
+            s[Z].compute_at(s[op], hi)
+            s[BLOCK].compute_at(s[op], hi)
+            BF = s.rfactor(BLOCK, c, factor_axis=3)
+            (i, nb, r) = s[BLOCK].op.axis
+            s[BF].compute_at(s[BLOCK], r)
+            (bi, bnb, br, bc) = s[BF].op.axis
+            (belem_idx,) = s[BF].op.reduce_axis
+            s[BF].reorder(bi, bnb, belem_idx, br, bc)
+            s[BF].vectorize(bc)
+
+    Z = op.input_tensors[0]
+    R = op.input_tensors[2]
+    HN = op.input_tensors[4]
+    IN = op.input_tensors[6]
+    # import pdb; pdb.set_trace()
+    schedule_block(Z)
+    schedule_block(R)
+    schedule_block(HN)
+    schedule_block(IN)
+
+
+@autotvm.register_topi_schedule(generic.schedule_sgrucell, 'cpu', ['direct'])
+def schedule_sgrucell(cfg, outs):
+    outs = [outs] if isinstance(outs, tvm.tensor.Tensor) else outs
+    s = tvm.create_schedule([x.op for x in outs])
+    def _callback(op):
+        if op.tag == 'sgrucell':
+            schedule_sgrucell_default(s, cfg, op, outs[0].op)
+    traverse_inline(s, outs[0].op, _callback)
     return s

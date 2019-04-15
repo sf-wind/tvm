@@ -55,6 +55,8 @@ def extract_from_program(func, params, ops, target, target_host=None):
         tvm.relay.op.nn.dense: [topi.nn.dense],
         tvm.relay.op.nn.deformable_conv2d: [topi.nn.deformable_conv2d_nchw],
         tvm.relay.op.nn.sdense: [topi.nn.sdense],
+        tvm.relay.op.nn.grucell: [topi.nn.grucell],
+        tvm.relay.op.nn.sgrucell: [topi.nn.sgrucell],
     }
 
     topi_funcs = []

@@ -145,6 +145,40 @@ def schedule_sdense(attrs, outputs, target):
 
 reg.register_pattern("nn.sdense", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
 
+# grucell
+@reg.register_compute("nn.grucell")
+def compute_grucell(attrs, inputs, out_type, target):
+    """Compute definition of grucell"""
+    return [topi.nn.grucell(inputs[0], inputs[1], inputs[2], inputs[3],
+                            inputs[4], inputs[5], inputs[6], inputs[7], inputs[8])]
+
+@reg.register_schedule("nn.grucell")
+def schedule_grucell(attrs, outputs, target):
+    """Schedule definition of batch_matmul"""
+    with target:
+        return topi.generic.schedule_grucell(outputs)
+
+reg.register_pattern("nn.grucell", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+# sgrucell
+@reg.register_compute("nn.sgrucell")
+def compute_sgrucell(attrs, inputs, out_type, target):
+    """Compute definition of sgrucell"""
+    return [topi.nn.sgrucell(inputs[0], inputs[1], inputs[2], inputs[3],
+                             inputs[4], inputs[5], inputs[6], inputs[7],
+                             inputs[8], inputs[9], inputs[10], inputs[11],
+                             inputs[12], inputs[13], inputs[14], inputs[15],
+                             inputs[16])]
+
+@reg.register_schedule("nn.sgrucell")
+def schedule_sgrucell(attrs, outputs, target):
+    """Schedule definition of batch_matmul"""
+    with target:
+        return topi.generic.schedule_sgrucell(outputs)
+
+reg.register_pattern("nn.sgrucell", reg.OpPattern.OUT_ELEMWISE_FUSABLE)
+
+
 # sparse_dense
 @reg.register_compute("nn.gru_gates")
 def compute_gru_gates(attrs, inputs, out_type, target):

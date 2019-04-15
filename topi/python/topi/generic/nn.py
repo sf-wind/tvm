@@ -244,6 +244,14 @@ def schedule_sdense(outs):
     return _default_schedule(outs, False)
 
 @tvm.target.generic_func
+def schedule_grucell(outs):
+    return _default_schedule(outs, False)
+
+@tvm.target.generic_func
+def schedule_sgrucell(outs):
+    return _default_schedule(outs, False)
+
+@tvm.target.generic_func
 def schedule_group_conv2d_nchw(outs):
     """Schedule for conv2d_nchw
 

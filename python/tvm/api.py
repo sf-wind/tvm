@@ -242,7 +242,7 @@ def placeholder(shape, dtype=None, name="placeholder"):
         shape, dtype, name)
 
 
-def compute(shape, fcompute, name="compute", tag="", attrs=None):
+def compute(shape, fcompute, name="compute", tag="", attrs=None, fcompute_kwargs={}):
     """Construct a new tensor by computing over the shape domain.
 
     The compute rule is result[axis] = fcompute(axis)
@@ -290,7 +290,7 @@ def compute(shape, fcompute, name="compute", tag="", attrs=None):
         raise ValueError("fcompute do not match dimension, ndim=%d" % ndim)
 
     dim_var = [_IterVar((0, s), x, 0) for x, s in zip(arg_names, shape[:out_ndim])]
-    body = fcompute(*[v.var for v in dim_var])
+    body = fcompute(*[v.var for v in dim_var], **fcompute_kwargs)
 
     if isinstance(body, _tensor.TensorIntrinCall):
         for i, s in enumerate(shape[out_ndim:]):

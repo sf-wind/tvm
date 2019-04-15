@@ -70,6 +70,8 @@ class TaskExtractEnv:
             topi.nn.dense: "topi_nn_dense",
             topi.nn.deformable_conv2d_nchw: "topi_nn_deformable_conv2d_nchw",
             topi.nn.sdense: "topi_nn_sdense",
+            topi.nn.grucell: "topi_nn_grucell",
+            topi.nn.sgrucell: "topi_nn_sgrucell",
         }
 
         self.topi_to_schedule = {
@@ -81,6 +83,8 @@ class TaskExtractEnv:
             topi.nn.conv2d_transpose_nchw: [topi.generic.schedule_conv2d_transpose_nchw],
             topi.nn.dense: [topi.generic.schedule_dense],
             topi.nn.sdense: [topi.generic.schedule_sdense],
+            topi.nn.grucell: [topi.generic.schedule_grucell],
+            topi.nn.sgrucell: [topi.generic.schedule_sgrucell],
             topi.nn.deformable_conv2d_nchw: [topi.generic.schedule_deformable_conv2d_nchw],
         }
 
@@ -186,6 +190,33 @@ class TaskExtractEnv:
 
             s = topi.generic.schedule_sdense([C])
             return s, [data, weight_data, weight_indices, weight_indptr, C]
+
+        @register("topi_nn_grucell")
+        def _topi_nn_grucell(*args, **kwargs):
+            assert not kwargs, "Do not support kwargs in template function call"
+            args = deserialize_args(args)
+            input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn = args[:7]
+            C = topi.nn.grucell(*args, **kwargs)
+
+            s = topi.generic.schedule_grucell([C])
+            return s, [input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn, C]
+
+        @register("topi_nn_sgrucell")
+        def _topi_nn_sgrucell(*args, **kwargs):
+            assert not kwargs, "Do not support kwargs in template function call"
+            args = deserialize_args(args)
+            input, w_x_data, w_x_indices, w_x_indptr, b_x, \
+                w_z_data, w_z_indices, w_z_indptr, b_z, \
+                w_in_data, w_in_indices, w_in_indptr, b_in, \
+                w_hn_data, w_hn_indices, w_hn_indptr, b_hn  = args[:18]
+            C = topi.nn.sdense(*args, **kwargs)
+
+            s = topi.generic.schedule_sdense([C])
+            return s, [input, w_x_data, w_x_indices, w_x_indptr, b_x, \
+                w_z_data, w_z_indices, w_z_indptr, b_z, \
+                w_in_data, w_in_indices, w_in_indptr, b_in, \
+                w_hn_data, w_hn_indices, w_hn_indptr, b_hn, C]
+
 
         @register("topi_nn_deformable_conv2d_nchw")
         def _topi_nn_deformable_conv2d_nchw(*args, **kwargs):
