@@ -35,7 +35,7 @@ void printRTF(
       << " us per sample.\t"
       << std::chrono::duration_cast<std::chrono::nanoseconds>(dur).count() /
           sample_count * 24 / (float)1000000
-      << " RTF \n";
+      << " RTF \tsample: " << sample_count << "\n";
 }
 
 float sampleProba(const float* p, std::mt19937& seed) {
