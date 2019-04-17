@@ -525,6 +525,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
         module = graph_runtime.create(graph, rlib, ctx)
         if args.debug:
+            print(rlib.get_source())
             print(rlib.get_source('asm'))
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
@@ -771,6 +772,7 @@ def factored_relay_cpp_frame(a1, a2, m, x_0, h1_0):
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
         lib.export_library(lib_f.name)
+    # import pdb; pdb.set_trace()
     I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
 
@@ -949,27 +951,26 @@ def exec_loaded_tvm():
     with open(graph_name, "r") as f:
         graph = f.read()
     with open(params_name, "rb") as f:
-        serialized_params = f.read()
+        serialized_params = bytearray(f.read())
 
     tvm_random_seed(10)
     T = a1.shape[1]
-    (graph, lib, params) = load_tvm(graph_name, lib_name, params_name)
-    import tempfile
-    with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
-        lib.export_library(lib_f.name)
+    # (graph, lib, params) = load_tvm(graph_name, lib_name, params_name)
+    # import tempfile
+    # with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
+    #     lib.export_library(lib_f.name)
     I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
-
     frame_func = tvm.get_global_func("tvm.contrib.wavernn.frame")
 
     outs = tvm.ndarray.array(np.random.randn(T).astype("float32"))
     h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
     frame_func(
         # Inputs
-        tvm.ndarray.array(I_residual),
-        tvm.ndarray.array(fc1_residual),
-        tvm.ndarray.array(x_0),
-        tvm.ndarray.array(h1_0),
+        tvm.ndarray.array(I_residual.detach().numpy()),
+        tvm.ndarray.array(fc1_residual.detach().numpy()),
+        tvm.ndarray.array(x_0.detach().numpy()),
+        tvm.ndarray.array(h1_0.detach().numpy()),
         # Outputs
         outs,
         h1,
@@ -991,9 +992,10 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+# test_relay_cpp_frame()
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
 # test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
 # skylake()
-haswell()
-# test_load()
+# haswell()
+test_load()
