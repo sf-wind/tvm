@@ -56,18 +56,19 @@ size_t WaveRNNModel::evaluate() {
   auto t_start = Clock::now();
   t_start = Clock::now();
 
+  int T = 1024;
   int ndim = 2;
   int dtype_code = kDLFloat;
   int dtype_bits = 32;
   int dtype_lanes = 1;
   int device_type = kDLCPU;
   int device_id = 0;
-  int64_t I_residual_shape[2] = {8, rnn_dim_};
+  int64_t I_residual_shape[2] = {T, rnn_dim_};
   DLTensor *I_residual;
   TVMArrayAlloc(I_residual_shape, ndim, dtype_code, dtype_bits, dtype_lanes,
                 device_type, device_id, &I_residual);
 
-  int64_t fc1_residual_shape[2] = {8, rnn_dim_};
+  int64_t fc1_residual_shape[2] = {T, rnn_dim_};
   DLTensor *fc1_residual;
   TVMArrayAlloc(fc1_residual_shape, ndim, dtype_code, dtype_bits, dtype_lanes,
                 device_type, device_id, &fc1_residual);
@@ -149,8 +150,12 @@ std::unique_ptr<T> make_unique(Args&&... args) {
 }
 
 void WaveRNNModel::loadTVMModel() {
+  /*
   tvm::runtime::Module lib =
       tvm::runtime::Module::LoadFromFile(lib_dot_so_path_, "so");
+  */
+  tvm::runtime::Module lib = (*tvm::runtime::Registry::Get("module._GetSystemLib"))();
+
 
   constexpr int device_type = kDLCPU;
   constexpr int device_id = 0;
@@ -200,7 +205,7 @@ std::vector<float> WaveRNNModel::tvmSample(
         static_cast<float*>(fc1_residual->data) + t * fc1_residual->shape[1];
     gr_->SetInput(
         fc1_residual_idx, const_cast<DLTensor*>(fc1_residual_t_));
-
+    dur_input += Clock::now() - t_start1;
     auto t_start = Clock::now();
     gr_->Run();
     dur += Clock::now() - t_start;
@@ -215,6 +220,7 @@ std::vector<float> WaveRNNModel::tvmSample(
     static_cast<float*>(x->data)[0] = x_t / 256;
   }
 
+  printRTF("dur_tvm_assign_input", dur_input, T);
   printRTF("dur_tvm_for_loop", dur, T);
 
   return outs;
