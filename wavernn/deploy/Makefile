@@ -29,6 +29,6 @@ lib/cpp_deploy_pack: cpp_deploy.cc lib/WaveRNNModel.o lib/libtvm_runtime_pack.o
 	@mkdir -p $(@D)
 	$(CXX) $(PKG_CFLAGS) -o $@  $^ $(PKG_LDFLAGS)
 
-lib/cpp_deploy_normal: cpp_deploy.cc lib/WaveRNNModel.o lib/libtvm_runtime_pack.o hsw_fast_wavernn_rnn_dims_1024_fc_dims_1024_feat_dims_19_aux_dims_64_lib.o
+lib/cpp_deploy_normal: cpp_deploy.cc lib/WaveRNNModel.o hsw_fast_wavernn_rnn_dims_1024_fc_dims_1024_feat_dims_19_aux_dims_64_lib.o
 	@mkdir -p $(@D)
-	$(CXX) $(PKG_CFLAGS) -o $@  $^ -ltvm_runtime $(PKG_LDFLAGS)
+	$(CXX) $(PKG_CFLAGS) -o $@  $^ $(PKG_LDFLAGS)
