@@ -231,16 +231,26 @@ bool SDenseRel(const Array<Type>& types, int num_inputs, const Attrs& attrs,
   // const auto* weight_indices = types[2].as<TensorTypeNode>();
   const auto* weight_indptr = types[3].as<TensorTypeNode>();
   if (data == nullptr) return false;
-
-  Array<IndexExpr> oshape({data->shape[0], (weight_indptr->shape[0] - 1) * weight_data->shape[1]});
+  const SDenseAttrs* param = attrs.as<SDenseAttrs>();
+  CHECK(param != nullptr);
+  const Layout in_layout(param->data_layout);
+  const Layout kernel_layout(param->kernel_layout);
+  auto m = data->shape[0];
+  if (in_layout.name() == "IN") {
+    m = data->shape[1];
+  }
+  Array<IndexExpr> oshape({m, (weight_indptr->shape[0] - 1) * weight_data->shape[1]});
   reporter->Assign(types[4], TensorTypeNode::make(oshape, data->dtype));
   return true;
 }
 
 // Positional relay function to create dense operator used by frontend FFI.
 Expr MakeSDense(Expr data, Expr weight_data, Expr weight_indices,
-                              Expr weight_indptr) {
+                Expr weight_indptr, std::string data_layout,
+                std::string kernel_layout) {
   auto attrs = make_node<SDenseAttrs>();
+  attrs->data_layout = std::move(data_layout);
+  attrs->kernel_layout = std::move(kernel_layout);
   static const Op& op = Op::Get("nn.sdense");
   return CallNode::make(op, {data, weight_data, weight_indices, weight_indptr,
                              }, Attrs(attrs), {});
@@ -248,7 +258,7 @@ Expr MakeSDense(Expr data, Expr weight_data, Expr weight_indices,
 
 TVM_REGISTER_API("relay.op.nn._make.sdense")
     .set_body([](const TVMArgs& args, TVMRetValue* rv) {
-      runtime::detail::unpack_call<Expr, 4>(MakeSDense, args, rv);
+      runtime::detail::unpack_call<Expr, 6>(MakeSDense, args, rv);
     });
 
 RELAY_REGISTER_OP("nn.sdense")

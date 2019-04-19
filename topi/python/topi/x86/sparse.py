@@ -9,10 +9,8 @@ import topi
 @autotvm.register_topi_compute(nn.sdense, 'cpu', ['direct'])
 def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
                  data_layout="NI", kernel_layout="OI", out_layout=""):
-    if data_layout == "NI" and kernel_layout == "OI":
-        return sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr)
-    else:
-        assert False
+    return sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
+                          data_layout = data_layout, kernel_layout = kernel_layout)
 
 def tvm_from_bf16(x):
     return tvm.call_pure_intrin("float32", "reinterpret", x.astype("uint32") << 16)
@@ -22,19 +20,28 @@ def specify_range(cfg, prefix, num):
     for i in range(num):
         cfg.define_knob(prefix + str(num) + "_" + str(i), range(i+1))
 
-def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
+
+
+
+def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
+                   data_layout, kernel_layout):
     import topi
+    # import pdb; pdb.set_trace()
     (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
     (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
     NB = NB_plus_1 - 1
     K = None
     NK = None
-    if len(data.shape) == 2:
-        (M, K) = topi.util.get_const_tuple(data.shape)
-        assert K % BS_C == 0
-    elif len(data.shape) == 3:
+    if len(data.shape) == 3:
+        assert data_layout == "NI"
         (M, NK, BS_C_1) = topi.util.get_const_tuple(data.shape)
         assert BS_C == BS_C_1
+    elif len(data.shape) == 2:
+        if data_layout == "NI":
+            (M, K) = topi.util.get_const_tuple(data.shape)
+        else:
+            (K, M) = topi.util.get_const_tuple(data.shape)
+        assert K % BS_C == 0
     oshape = (M, NB * BS_R)
     assert data.dtype in ("float32", "uint16"), data.dtype
     assert weight_indices.dtype in ("int32", "uint16"), weight_indices.dtype
@@ -53,7 +60,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     cfg.define_knob('vectorize_axis', [-1])
     cfg.define_knob('parallel_axis', [-1])
     '''
-    if cfg['align_data'].val:
+    if cfg['align_data'].val and data_layout == "NI":
         X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
     else:
         X = data
@@ -61,6 +68,7 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
     # bs_r = tvm.reduce_axis((0, weight_data.shape[1]), name="bs_r")
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
+        # import pdb; pdb.set_trace()
         row_start = weight_indptr[nb]
         row_end = weight_indptr[nb + 1]
         row_elems = row_end - row_start
@@ -71,7 +79,9 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
             weight_val = tvm_from_bf16(weight_val)
         else:
             weight_val = weight_val.astype("float32")
-        if cfg['align_data'].val:
+        if data_layout == "IN":
+            x_val = X[weight_indices[elem] * BS_C + bs_c, i]
+        elif cfg['align_data'].val:
             x_val = X[i, weight_indices[elem], bs_c]
         else:
             x_val = X[i, weight_indices[elem] * BS_C + bs_c]
@@ -81,17 +91,24 @@ def sdense_mknk(cfg, data, weight_data, weight_indices, weight_indptr):
             x_val = x_val.astype("float32")
         return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
     Y = tvm.compute((M, NB, BS_R), f,
-        name="sdense_kmnk_block",
-        tag = "sdense_kmnk_block")
+        name="sdense_block",
+        tag = "sdense_block")
     O = tvm.compute(oshape, lambda m, n: Y[m, n // BS_R, n % BS_R],
-        name="sdense_mknk", tag="sdense_mknk")
+        name="sdense", tag="sdense")
     if cfg.is_fallback:
-        _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS)
+        _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_layout, kernel_layout)
     return O
 
 
-def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
+def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_layout, kernel_layout):
     # import pdb; pdb.set_trace()
+    cfg["align_data"] = OtherOptionEntity(False)
+    cfg["rfactor_bs_c"] = OtherOptionEntity(False)
+    for i in range(NUM_AXIS):
+        cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
+    cfg["vectorize_axis"] = OtherOptionEntity(-1)
+    cfg["parallel_axis"] = OtherOptionEntity(False)
+    cfg["unroll_axis"] = OtherOptionEntity(-1)
     if M == 1 and BS_R == 1 and BS_C >= 16:
         cfg["align_data"] = OtherOptionEntity(False)
         cfg["rfactor_bs_c"] = OtherOptionEntity(True)
@@ -108,24 +125,18 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS):
         cfg["vectorize_axis"] = OtherOptionEntity(2)
         cfg["parallel_axis"] = OtherOptionEntity(True)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
-    elif M == 8 and BS_R >= 16 and BS_C == 1:
+    elif M >= 8 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
         cfg["rfactor_bs_c"] = OtherOptionEntity(False)
         cfg["axis_4_0"] = OtherOptionEntity(0)
         cfg["axis_4_1"] = OtherOptionEntity(1)
         cfg["axis_4_2"] = OtherOptionEntity(2)
         cfg["axis_4_3"] = OtherOptionEntity(2)
-        cfg["vectorize_axis"] = OtherOptionEntity(-1)
+        cfg["vectorize_axis"] = OtherOptionEntity(3)
         cfg["parallel_axis"] = OtherOptionEntity(False)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
-    else:
-        cfg["align_data"] = OtherOptionEntity(False)
-        cfg["rfactor_bs_c"] = OtherOptionEntity(True)
-        for i in range(NUM_AXIS):
-            cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
-        cfg["vectorize_axis"] = OtherOptionEntity(-1)
-        cfg["parallel_axis"] = OtherOptionEntity(False)
-        cfg["unroll_axis"] = OtherOptionEntity(-1)
+
+
 
 
 @autotvm.register_topi_schedule(generic.schedule_sdense, 'cpu', ['direct'])
@@ -134,8 +145,8 @@ def schedule_sdense(cfg, outs):
     s = tvm.create_schedule([x.op for x in outs])
 
     def _callback(op):
-        if op.tag == 'sdense_mknk':
-            schedule_sdense_mknk(s, cfg, op, outs[0].op)
+        if op.tag == 'sdense':
+            schedule_sdense_sch(s, cfg, op, outs[0].op)
     traverse_inline(s, outs[0].op, _callback)
     return s
 
@@ -164,13 +175,13 @@ def reorder_axes(cfg, prefix, axes):
     return new_axes
 
 
-def schedule_sdense_mknk(s, cfg, op, out):
+def schedule_sdense_sch(s, cfg, op, out):
     # import pdb; pdb.set_trace()
     (mo, no) = s[op].op.axis
     op_o = op.output(0)
     Y = op.input_tensors[0]
     Y_op = s[Y].op
-    assert Y_op.tag == "sdense_kmnk_block"
+    assert Y_op.tag == "sdense_block"
     (i, nb, r) = Y_op.axis
     (elem_idx, bs_c) = Y_op.reduce_axis
     I = get_const_int(op_o.shape[0])
@@ -237,7 +248,9 @@ def schedule_sdense_mknk(s, cfg, op, out):
         s[op_o].compute_at(s[out], yoi)
         s[Y].compute_at(s[out], yoi)
     else:
+        # s[Y].compute_at(s[op], mo)
         s[out].unroll(mo)
+        pass
 
 @generic.schedule_sparse_dense.register(["cpu"])
 def schedule_sparse_dense(outs):

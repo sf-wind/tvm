@@ -25,6 +25,8 @@ parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
+parser.add_argument("--k", type=int, default=0)
+parser.add_argument("--n", type=int, default=0)
 parser.add_argument("--bs_r", type=int, default=0)
 parser.add_argument("--bs_c", type=int, default=0)
 parser.add_argument("--tuner", type=str, default="xgboost",
@@ -60,11 +62,12 @@ skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
 
 M = args.m if args.m > 0 else 1
-N = 3072
-K = 1024
+N = args.n if args.n > 0 else 3072
+K = args.k if args.k > 0 else 1024
 '''
-N = 16
-K = 16
+N = 32
+K = 8
+M = 16
 '''
 BS_R = args.bs_r if args.bs_r > 0 else 1
 BS_C = args.bs_c if args.bs_c > 0 else 1
@@ -136,30 +139,6 @@ def instantiate(param):
         return [(param.name_hint, tvm.nd.array(np.zeros(param.type_annotation.concrete_shape).astype(param.type_annotation.dtype), ctx))
         ]
 
-
-print("sdense")
-x = relay.var("x", shape=[M, K], dtype=dtype)
-fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=wdtype))
-# zero = relay.var("zero", shape=(M, N), dtype=dtype)
-outputs = relay.nn.sdense(x, fc_0_W)
-
-func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
-# print(func.astext(show_meta_data=False))
-relay.ir_pass.infer_type(func)
-# print(func.astext(show_meta_data=False))
-
-param_vars = [
-    fc_0_W
-]
-input_vars = [x]
-
-params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
-inputs = collections.OrderedDict(
-    [(
-        param.name_hint,
-        tvm.nd.array(a.asnumpy(), ctx)
-    ) for param in input_vars])
-
 def tune():
     global func
     with relay.build_config(opt_level=2):
@@ -219,6 +198,32 @@ def build_graph():
         '''
         return graph, lib, new_params
 
+# import pdb; pdb.set_trace()
+print("sdense: [{}, {}]x[{}, {}]".format(M, K, N, K))
+x = relay.var("x", shape=[M, K], dtype=dtype)
+fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=wdtype))
+# zero = relay.var("zero", shape=(M, N), dtype=dtype)
+outputs = relay.nn.sdense(x, fc_0_W, data_layout="NI")
+
+func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+# print(func.astext(show_meta_data=False))
+relay.ir_pass.infer_type(func)
+# print(func.astext(show_meta_data=False))
+
+param_vars = [
+    fc_0_W
+]
+input_vars = [x]
+
+params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
+inputs = collections.OrderedDict(
+    [(
+        param.name_hint,
+        tvm.nd.array(a.asnumpy(), ctx)
+    ) for param in input_vars])
+
+
+
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()
 else:
@@ -230,6 +235,55 @@ r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
 module = graph_runtime.create(graph, lib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
+module.run()
+ro = tvm.nd.empty([M, N])
+module.get_output(0, ro)
+tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
+
+ftimer = module.module.time_evaluator("run", ctx, 10000)
+for i in range(5):
+    prof_res = ftimer()
+    print("TVM time: ", prof_res.mean)
+
+
+# import pdb; pdb.set_trace()
+print("sdense: [{}, {}]x[{}, {}]".format(K, M, N, K))
+x = relay.var("x", shape=[K, M], dtype=dtype)
+fc_0_W = to_bsr(relay.var("fc_0_W", shape=(N, K), dtype=wdtype))
+# zero = relay.var("zero", shape=(M, N), dtype=dtype)
+outputs = relay.nn.sdense(x, fc_0_W, data_layout="IN")
+
+func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
+# print(func.astext(show_meta_data=False))
+relay.ir_pass.infer_type(func)
+# print(func.astext(show_meta_data=False))
+
+param_vars = [
+    fc_0_W
+]
+input_vars = [x]
+
+params = collections.OrderedDict([(k, v) for param in param_vars for (k, v) in instantiate(param)])
+inputs = collections.OrderedDict(
+    [(
+        param.name_hint,
+        tvm.nd.array(np.transpose(a.asnumpy()), ctx)
+    ) for param in input_vars])
+
+
+
+if args.default_schedule:
+    (graph, lib, new_params) = build_graph()
+else:
+    with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
+        (graph, lib, new_params) = build_graph()
+
+r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
+r_inputs = {k: tvm.nd.array(v, ctx) for k, v in inputs.items()}
+module = graph_runtime.create(graph, lib, ctx)
+module.set_input(**r_new_params)
+module.set_input(**r_inputs)
+# import pdb; pdb.set_trace()
 module.run()
 ro = tvm.nd.empty([M, N])
 module.get_output(0, ro)

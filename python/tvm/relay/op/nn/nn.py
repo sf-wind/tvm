@@ -809,9 +809,9 @@ def sparse_dense_mknk(data, weight):
     return _make.sparse_dense_mknk(data, weight.data, weight.indices,
                                         weight.indptr)
 
-def sdense(data, weight):
+def sdense(data, weight, data_layout="NI", kernel_layout="OI"):
     return _make.sdense(data, weight.data, weight.indices,
-                                        weight.indptr)
+                        weight.indptr, data_layout, kernel_layout)
 
 def grucell(input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn):
     return _make.grucell(input, tw_x, tb_x, tw_z, tb_z, tw_in, tb_in, tw_hn, tb_hn)

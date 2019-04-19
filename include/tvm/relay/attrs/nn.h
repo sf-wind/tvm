@@ -356,7 +356,14 @@ struct SparseDenseStructureMKNKAttrs : public tvm::AttrsNode<SparseDenseStructur
 
 /*! \brief Attributes for dense operator */
 struct SDenseAttrs : public tvm::AttrsNode<SDenseAttrs> {
-  TVM_DECLARE_ATTRS(SDenseAttrs, "relay.attrs.SDenseAttrs") {}
+  std::string data_layout;
+  std::string kernel_layout;
+  TVM_DECLARE_ATTRS(SDenseAttrs, "relay.attrs.SDenseAttrs") {
+    TVM_ATTR_FIELD(data_layout).set_default("NI")
+        .describe("Dimension ordering of input data. ");
+    TVM_ATTR_FIELD(kernel_layout).set_default("OI")
+        .describe("Dimension ordering of weight.");
+  }
 };
 
 /*! \brief Attributes for dense operator */
