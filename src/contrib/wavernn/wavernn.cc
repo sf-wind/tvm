@@ -168,13 +168,13 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
     gr->Run();
 
     // Update h1
-    gr->CopyOutputTo(gr->NumOutputs() - 1, h1);
+    gr->CopyOutputTo(1, h1);
 
 
     // Compute and update new sampled x values
+    gr->CopyOutputTo(0, x_proba);
     for (int i = 0; i < num_parallel_samples; i++) {
-      gr->CopyOutputTo(i, x_proba);
-      const auto x_t = sample_proba(static_cast<const float*>(x_proba->data));
+      const auto x_t = sample_proba(static_cast<const float*>(x_proba->data)+ i * x_proba->shape[x_proba->ndim-1]);
       static_cast<float*>(outs->data)[i * out_num + output_end] = x_t;
     }
   }
