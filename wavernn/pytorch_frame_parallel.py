@@ -29,8 +29,10 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
-parser.add_argument("--wtype", type=str, default="float32",
-                    choices=["float32", "bfloat16"])
+parser.add_argument("--wdtype", type=str, default="uint16",
+                    choices=["float32", "uint16", "int8", "compare"])
+parser.add_argument("--witype", type=str, default="int32",
+                    choices=["int32", "uint16", "compare"])
 parser.add_argument("--sdense", action="store_true")
 parser.add_argument("--alt_parallel", action="store_true")
 args = parser.parse_args()
@@ -99,6 +101,9 @@ feat_dims = 19
 aux_dims = 64
 n_classes = 2 ** 8
 num_parallel_samples = 4
+
+wdtype = args.wdtype
+witype = args.witype
 
 T = 8
 x_num = np.sum(range(num_parallel_samples))
@@ -319,7 +324,7 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
-def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile=False):
+def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="uint16", sdense="False", tune=False, profile=False):
     Ifactored = nn.Linear(x_num, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :x_num]
     Ifactored.bias[:] = I.bias[:]
@@ -406,12 +411,12 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
-        print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
-        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype="float32" if not bfloat16 else "uint16")
-        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype="int32")
+        # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
+        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
+        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
         v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
-        params[name + "_data"] = tvm.ndarray.array(sp_arr.data) if not bfloat16 else tvm.ndarray.array(to_bf16(sp_arr.data))
-        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices)
+        params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if  wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
+        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
         params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
 
@@ -682,6 +687,41 @@ def test_relay_cpp_frame_fast():
         # print(outs_ref, outs_new)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+def test(target):
+    args0 = {}
+    args1 = {}
+    if args.wdtype != "compare":
+        args0["wdtype"] = args.wdtype
+        args1["wdtype"] = args.wdtype
+    else:
+        args0["wdtype"] = "int8"
+        args1["wdtype"] = "uint16"
+    if args.witype != "compare":
+        args0["witype"] = args.witype
+        args1["witype"] = args.witype
+    else:
+        args0["witype"] = "int32"
+        args1["witype"] = "uint16"
+    if args.sdense != "compare":
+        args0["sdense"] = args.sdense
+        args1["sdense"] = args.sdense
+    else:
+        args0["sdense"] = "False"
+        args1["sdense"] = "True"
+    print(args0)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
+    print(args1)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
+    print(args0)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
+    print(args1)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
+    print(args0)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args0)
+    print(args1)
+    (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
+
+
 def skylake():
     (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", bfloat16=True, profile=True)
     with open(
@@ -714,5 +754,8 @@ def haswell():
 # test_relay_frame()
 # test_relay_cpp_frame()
 test_relay_cpp_frame_fast()
+# test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
+test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
+
 # skylake()
 # haswell()
