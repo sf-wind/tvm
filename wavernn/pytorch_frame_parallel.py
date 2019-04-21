@@ -33,7 +33,8 @@ parser.add_argument("--wdtype", type=str, default="uint16",
                     choices=["float32", "uint16", "int8", "compare"])
 parser.add_argument("--witype", type=str, default="int32",
                     choices=["int32", "uint16", "compare"])
-parser.add_argument("--sdense", action="store_true")
+parser.add_argument("--sdense", type=str, default="False",
+                    choices=["False", "True", "compare"])
 parser.add_argument("--alt_parallel", action="store_true")
 args = parser.parse_args()
 
@@ -383,7 +384,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="uint16", s
         return relay.expr.const(x, "float32")
 
     def sparse_dense(X, W, B, **kwargs):
-        if args.sdense:
+        if args.sdense == "True":
             d = relay.nn.sdense(X, W)
         else:
             d = relay.nn.sparse_dense(X, W)
