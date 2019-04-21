@@ -325,7 +325,7 @@ def build_wavernn_module(target="llvm"):
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
     return (graph, lib, params)
 
-def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="uint16", sdense="False", tune=False, profile=False):
+def build_fast_wavernn_module(target="llvm", wdtype="float32", witype="int32", sdense="False", tune=False, profile=False):
     Ifactored = nn.Linear(x_num, rnn_dims)
     Ifactored.weight[:, :] = I.weight[:, :x_num]
     Ifactored.bias[:] = I.bias[:]
@@ -526,7 +526,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="uint16", s
         module = graph_runtime.create(graph, rlib, ctx)
         module.set_input(**r_new_params)
         module.set_input(**r_inputs)
-        ftimer = module.module.time_evaluator("run", ctx, number=100000)
+        ftimer = module.module.time_evaluator("run", ctx, number=10000)
         for i in range(5):
             prof_res = ftimer()
             print("TVM time: {:.2f}us".format(prof_res.mean * 10 ** 6))
