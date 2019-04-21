@@ -32,6 +32,7 @@ parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--wtype", type=str, default="float32",
                     choices=["float32", "bfloat16"])
 parser.add_argument("--sdense", action="store_true")
+parser.add_argument("--alt_parallel", action="store_true")
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -435,21 +436,22 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
 
     x_dense = sparse_dense(x_fc, Rfc2_W, Rfc2_B)
     x_prob_unnorm = approx_exp(x_dense)
-    x_prob_tuple = relay.reshape(x_prob_unnorm, (num_parallel_samples, n_classes))
-    x_prob_sum = relay.sum(x_prob_tuple, axis=-1)
-    x_prob_sum = relay.expand_dims(x_prob_sum, -1)
-    x_prob = x_prob_tuple / x_prob_sum
-    outputs = relay.expr.Tuple([x_prob, h1])
-    '''
-    x_prob_tuple = relay.split(x_prob_unnorm, num_parallel_samples, axis=1)
+    if args.alt_parallel:
+        x_prob_tuple = relay.split(x_prob_unnorm, num_parallel_samples, axis=1)
 
-    tuple = []
-    for i in range(num_parallel_samples):
-        x_prob_sum = relay.sum(x_prob_unnorm, axis=-1)
-        x_prob = x_prob_unnorm / x_prob_sum
-        tuple.append(x_prob)
-    outputs = relay.expr.Tuple(tuple + [h1])
-    '''
+        tuple = []
+        for i in range(num_parallel_samples):
+            x_prob_sum = relay.sum(x_prob_unnorm, axis=-1)
+            x_prob = x_prob_unnorm / x_prob_sum
+            tuple.append(x_prob)
+        outputs = relay.expr.Tuple(tuple + [h1])
+    else:
+        x_prob_tuple = relay.reshape(x_prob_unnorm, (num_parallel_samples, n_classes))
+        x_prob_sum = relay.sum(x_prob_tuple, axis=-1)
+        x_prob_sum = relay.expand_dims(x_prob_sum, -1)
+        x_prob = x_prob_tuple / x_prob_sum
+        outputs = relay.expr.Tuple([x_prob, h1])
+
     func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
     func = relay.ir_pass.infer_type(func)
     # print(func.astext())
@@ -625,6 +627,10 @@ def factored_relay_cpp_frame_fast(a1, a2, m, outputs_0, h1_0):
     np_outs = np.random.randn(num_parallel_samples, T + num_parallel_samples - 1).astype("float32")
     np_outs[:, :num_parallel_samples-1] = outputs
     outs = tvm.ndarray.array(np_outs)
+    if args.alt_parallel:
+        num_samples = 1
+    else:
+        num_samples = num_parallel_samples
     # h1 = tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32"))
     frame_func(
         # Inputs
@@ -636,7 +642,7 @@ def factored_relay_cpp_frame_fast(a1, a2, m, outputs_0, h1_0):
         h1,
         # Temporary storage to make entire frame_func allocation free.
         tvm.ndarray.array(np.random.randn(1, x_num).astype("float32")),
-        tvm.ndarray.array(np.random.randn(num_parallel_samples, n_classes).astype("float32")),
+        tvm.ndarray.array(np.random.randn(num_samples, n_classes).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, rnn_dims).astype("float32")),
         tvm.ndarray.array(np.random.randn(1, fc_dims).astype("float32")),
         # Data for constructing the module.

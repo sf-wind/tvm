@@ -128,7 +128,7 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
   const size_t T = I_residual->shape[0];
   const size_t out_num = outs->shape[1];
   DLTensor* h1 = h1_0;
-  int num_parallel_samples = x_proba->shape[0];
+  int num_parallel_samples = x_proba->shape[0] > 1 ? x_proba->shape[0] : gr->NumOutputs() - 1;
 
   auto sample_proba = [&](const float* p) -> float {
     std::uniform_real_distribution<float> dis;
@@ -172,10 +172,18 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
 
 
     // Compute and update new sampled x values
-    gr->CopyOutputTo(0, x_proba);
-    for (int i = 0; i < num_parallel_samples; i++) {
-      const auto x_t = sample_proba(static_cast<const float*>(x_proba->data)+ i * x_proba->shape[x_proba->ndim-1]);
-      static_cast<float*>(outs->data)[i * out_num + output_end] = x_t;
+    if (x_proba->shape[0] > 1) {
+      gr->CopyOutputTo(0, x_proba);
+      for (int i = 0; i < num_parallel_samples; i++) {
+        const auto x_t = sample_proba(static_cast<const float*>(x_proba->data)+ i * x_proba->shape[x_proba->ndim-1]);
+        static_cast<float*>(outs->data)[i * out_num + output_end] = x_t;
+      }
+    } else {
+      for (int i = 0; i < num_parallel_samples; i++) {
+        gr->CopyOutputTo(i, x_proba);
+        const auto x_t = sample_proba(static_cast<const float*>(x_proba->data));
+        static_cast<float*>(outs->data)[i * out_num + output_end] = x_t;
+      }
     }
   }
 
