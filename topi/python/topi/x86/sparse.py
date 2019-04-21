@@ -107,7 +107,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_la
     for i in range(NUM_AXIS):
         cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
     cfg["vectorize_axis"] = OtherOptionEntity(-1)
-    cfg["parallel_axis"] = OtherOptionEntity(False)
+    cfg["parallel_axis"] = OtherOptionEntity(-1)
     cfg["unroll_axis"] = OtherOptionEntity(-1)
     if M == 1 and BS_R == 1 and BS_C >= 16:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -115,7 +115,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_la
         for i in range(NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(-1)
-        cfg["parallel_axis"] = OtherOptionEntity(False)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
     elif M == 1 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -123,7 +123,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_la
         for i in range(NUM_AXIS):
             cfg["axis_" + str(NUM_AXIS) + "_" + str(i)] = OtherOptionEntity(i)
         cfg["vectorize_axis"] = OtherOptionEntity(2)
-        cfg["parallel_axis"] = OtherOptionEntity(True)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
     elif M >= 8 and BS_R >= 16 and BS_C == 1:
         cfg["align_data"] = OtherOptionEntity(False)
@@ -133,7 +133,7 @@ def _default_sdense_config(cfg, M, K, NK, NUM, BS_R, BS_C, NB, NUM_AXIS, data_la
         cfg["axis_4_2"] = OtherOptionEntity(2)
         cfg["axis_4_3"] = OtherOptionEntity(2)
         cfg["vectorize_axis"] = OtherOptionEntity(3)
-        cfg["parallel_axis"] = OtherOptionEntity(False)
+        cfg["parallel_axis"] = OtherOptionEntity(-1)
         cfg["unroll_axis"] = OtherOptionEntity(-1)
 
 
@@ -247,7 +247,7 @@ def schedule_sdense_sch(s, cfg, op, out):
         s[out].vectorize(yi)
         # s[out].unroll(yo)
         SPLIT_NUM = get_const_int(split_axis.dom.extent)
-        if SPLIT_NUM < 4 * 32 or cfg["parallel_axis"].val is False:
+        if SPLIT_NUM < 4 * 32 or cfg["parallel_axis"].val < 0:
             yoi = yo
         else:
             (yoo, yoi) = s[out].split(yo, nparts=4)
