@@ -5,6 +5,7 @@ from tvm import autotvm
 from .util import get_fp32_len
 from tvm.autotvm.task.space import OtherOptionEntity, ReorderEntity
 import topi
+import os
 
 @autotvm.register_topi_compute(nn.sdense, 'cpu', ['direct'])
 def sdense(cfg, data, weight_data, weight_indices, weight_indptr,
@@ -177,6 +178,7 @@ def reorder_axes(cfg, prefix, axes):
 
 def schedule_sdense_sch(s, cfg, op, out):
     # import pdb; pdb.set_trace()
+    num_threads = os.environ("TVM_NUM_THREADS")
     (mo, no) = s[op].op.axis
     op_o = op.output(0)
     Y = op.input_tensors[0]
@@ -247,10 +249,11 @@ def schedule_sdense_sch(s, cfg, op, out):
         s[out].vectorize(yi)
         # s[out].unroll(yo)
         SPLIT_NUM = get_const_int(split_axis.dom.extent)
-        if SPLIT_NUM < 4 * 32 or cfg["parallel_axis"].val < 0:
+        if SPLIT_NUM < 4 * 32 or num_threads == 1:
             yoi = yo
         else:
-            (yoo, yoi) = s[out].split(yo, nparts=4)
+            p = num_threads if num_threads < 4 else 4
+            (yoo, yoi) = s[out].split(yo, nparts=p)
             s[out].parallel(yoo)
         s[out].unroll(yoi)
         s[op_o].compute_at(s[out], yoi)
