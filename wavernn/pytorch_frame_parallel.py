@@ -135,14 +135,14 @@ def sample(x_prob):
     result[:] = np.argmax(x_prob - gumbel)
     return torch.tensor(result / n_classes)
 
-def sample_proba(x_prob):
+def sample_proba(x_prob, i=0):
     rand_sample = 0
-    prob_sum = x_prob[0][0]
+    prob_sum = x_prob[i][0]
     rand = tvm_random_uniform()
 
     while prob_sum < rand:
         rand_sample += 1
-        prob_sum += x_prob[0][rand_sample]
+        prob_sum += x_prob[i][rand_sample]
 
     result = np.zeros((1, 1), dtype="float32")
     result[:] = rand_sample
@@ -226,10 +226,13 @@ def factored_premul_frame(a1, a2, m, outputs_0, h1_0):
 
         x_fc = F.relu(fc1factored(xres) + fc1_residual[t:t+1])
         x_prob = fc2(x_fc)
+        # import pdb; pdb.set_trace()
+        x_prob_sub = x_prob.view(num_parallel_samples, n_classes)
+        x_softmax = torch.softmax(x_prob_sub, dim=-1)
         output = torch.empty(num_parallel_samples)
         for i in range(num_parallel_samples):
-            x_prob_sub = torch.softmax(x_prob[:, i * n_classes : (i+1) * n_classes], dim=1)
-            x = sample_proba(x_prob_sub)
+            # x_prob_sub = torch.softmax(x_prob[:, i * n_classes : (i+1) * n_classes], dim=1)
+            x = sample_proba(x_softmax, i)
             output[i] = x
         output = output.unsqueeze(1)
         outputs=torch.cat([outputs, output], dim=1)
@@ -696,7 +699,7 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
-# test_factored_premul_frame()
+test_factored_premul_frame()
 # test_relay_frame()
 # test_relay_cpp_frame()
 test_relay_cpp_frame_fast()
