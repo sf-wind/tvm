@@ -168,7 +168,7 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
     gr->Run();
 
     // Update h1
-    gr->CopyOutputTo(1, h1);
+    gr->CopyOutputTo(gr->NumOutputs() - 1, h1);
 
 
     // Compute and update new sampled x values

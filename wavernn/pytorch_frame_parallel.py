@@ -712,7 +712,7 @@ def haswell():
 
 # test_factored_premul_frame()
 # test_relay_frame()
-test_relay_cpp_frame()
-# test_relay_cpp_frame_fast()
+# test_relay_cpp_frame()
+test_relay_cpp_frame_fast()
 # skylake()
 # haswell()
