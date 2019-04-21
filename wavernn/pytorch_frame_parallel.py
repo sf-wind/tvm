@@ -441,8 +441,8 @@ def build_fast_wavernn_module(target="llvm", bfloat16=False, tune=False, profile
 
         tuple = []
         for i in range(num_parallel_samples):
-            x_prob_sum = relay.sum(x_prob_tuple, axis=-1)
-            x_prob = x_prob_tuple / x_prob_sum
+            x_prob_sum = relay.sum(x_prob_tuple[i], axis=-1)
+            x_prob = x_prob_tuple[i] / x_prob_sum
             tuple.append(x_prob)
         outputs = relay.expr.Tuple(tuple + [h1])
     else:
