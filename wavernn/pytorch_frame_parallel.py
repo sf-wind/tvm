@@ -303,12 +303,16 @@ def build_wavernn_module(target="llvm"):
     Rfc2_B = relay.var("fc2_B", shape=(n_classes * num_parallel_samples,), dtype="float32")
 
     x_dense = dense(x_fc, Rfc2_W, Rfc2_B)
+    x_prob_sub = relay.reshape(x_dense, (num_parallel_samples, n_classes))
+    x_softmax = relay.nn.softmax(x_prob_sub, -1)
+    '''
     x_prob_tuple = relay.split(x_dense, num_parallel_samples, axis=1)
     tuple = []
     for i in range(num_parallel_samples):
         tuple.append(relay.nn.softmax(x_prob_tuple[i]))
+    '''
 
-    outputs = relay.expr.Tuple( tuple + [h1])
+    outputs = relay.expr.Tuple( [x_softmax, h1])
     func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
     func = relay.ir_pass.infer_type(func)
     graph, lib, params = relay.build_module.build(func, target=target, params=params)
@@ -556,10 +560,11 @@ def factored_relay_frame(a1, a2, m, outputs_0, h1_0):
         module.run()
         num_outputs = module.get_num_outputs()
         h1 = module.get_output(num_outputs-1)
-        output = torch.empty(num_outputs-1)
-        for i in range(num_outputs-1):
-            x_prob = module.get_output(i)
-            x = sample_proba(torch.tensor(x_prob.asnumpy()))
+        output = torch.empty(num_parallel_samples)
+        x_softmax = module.get_output(0)
+        for i in range(num_parallel_samples):
+            # x_prob = module.get_output(i)
+            x = sample_proba(torch.tensor(x_softmax.asnumpy()), i)
             output[i] = x
         output = output.unsqueeze(1)
         outputs = torch.cat([outputs, output], dim=1)
@@ -699,9 +704,9 @@ def haswell():
 
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
-test_factored_premul_frame()
-# test_relay_frame()
+# test_factored_premul_frame()
+test_relay_frame()
 # test_relay_cpp_frame()
-test_relay_cpp_frame_fast()
-skylake()
+# test_relay_cpp_frame_fast()
+# skylake()
 # haswell()
