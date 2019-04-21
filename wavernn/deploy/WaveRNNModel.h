@@ -14,7 +14,7 @@ class WaveRNNModel {
     return "WaveRNNModel";
   }
 
-  size_t evaluate();
+  float evaluate();
 
   void init();
 

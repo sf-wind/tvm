@@ -209,9 +209,17 @@ def schedule_sdense_sch(s, cfg, op, out):
             s[BF].unroll(new_axis[cfg["unroll_axis"].val])
     else:
         # import pdb; pdb.set_trace()
+        io = None
+        if I > 10240:
+            (io, ii) = s[Y].split(i,32)
+        else:
+            ii = i
         axes = [elem_idx, bs_c, r, i]
         new_axis = reorder_axes(cfg, "axis_", axes)
-        s[Y].reorder(nb, *new_axis)
+        raxes = [nb] + new_axis
+        if io is not None:
+            raxes = [io] + raxes
+        s[Y].reorder(*raxes)
         if cfg["vectorize_axis"].val >= 0 and \
                 new_axis[cfg["vectorize_axis"].val] != elem_idx:
             s[Y].vectorize(new_axis[cfg["vectorize_axis"].val])
@@ -248,8 +256,10 @@ def schedule_sdense_sch(s, cfg, op, out):
         s[op_o].compute_at(s[out], yoi)
         s[Y].compute_at(s[out], yoi)
     else:
-        # s[Y].compute_at(s[op], mo)
-        s[out].unroll(mo)
+        (noo, noi) = s[op].split(no, BS_R)
+        s[Y].compute_at(s[op], noo)
+        # s[out].unroll(mo)
+        # s[op].reorder(no, mo)
         pass
 
 @generic.schedule_sparse_dense.register(["cpu"])

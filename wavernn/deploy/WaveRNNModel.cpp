@@ -51,7 +51,7 @@ float sampleProba(const float* p, std::mt19937& seed) {
 
 } // namespace
 
-size_t WaveRNNModel::evaluate() {
+float WaveRNNModel::evaluate() {
   init();
   auto t_start = Clock::now();
   t_start = Clock::now();
@@ -97,7 +97,7 @@ size_t WaveRNNModel::evaluate() {
 
   std::cout << "dur_smp_net_time: " << std::chrono::duration_cast<std::chrono::milliseconds>(dur_smp_net_time).count() << std::endl;
 
-  return 0;
+  return outs[outs.size()-1];
 }
 
 void WaveRNNModel::init() {

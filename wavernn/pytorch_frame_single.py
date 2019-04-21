@@ -959,7 +959,8 @@ def exec_loaded_tvm():
     # import tempfile
     # with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
     #     lib.export_library(lib_f.name)
-    I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
+    concat = np.concatenate((m[0], a1[0]), axis=1)
+    I_residual = concat @ I.weight[:, 1:].transpose(1, 0)
     fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
     frame_func = tvm.get_global_func("tvm.contrib.wavernn.frame")
 
@@ -992,10 +993,10 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
-# test_relay_cpp_frame()
+test_relay_cpp_frame()
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
 # test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
 # skylake()
 # haswell()
-test_load()
+# test_load()

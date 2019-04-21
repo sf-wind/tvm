@@ -240,7 +240,7 @@ ro = tvm.nd.empty([M, N])
 module.get_output(0, ro)
 tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
 
-ftimer = module.module.time_evaluator("run", ctx, 10000)
+ftimer = module.module.time_evaluator("run", ctx, 1000)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
@@ -289,7 +289,7 @@ ro = tvm.nd.empty([M, N])
 module.get_output(0, ro)
 tvm.testing.assert_allclose(ro.asnumpy(), answer, rtol=1e-5)
 
-ftimer = module.module.time_evaluator("run", ctx, 10000)
+ftimer = module.module.time_evaluator("run", ctx, 1000)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
