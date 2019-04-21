@@ -128,7 +128,7 @@ TVM_REGISTER_GLOBAL("tvm.contrib.wavernn.parallel_frame")
   const size_t T = I_residual->shape[0];
   const size_t out_num = outs->shape[1];
   DLTensor* h1 = h1_0;
-  int num_parallel_samples = gr->NumOutputs() - 1;
+  int num_parallel_samples = x_proba->shape[0];
 
   auto sample_proba = [&](const float* p) -> float {
     std::uniform_real_distribution<float> dis;

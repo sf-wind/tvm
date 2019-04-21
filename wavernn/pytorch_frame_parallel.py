@@ -705,8 +705,8 @@ def haswell():
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
 
 # test_factored_premul_frame()
-test_relay_frame()
-# test_relay_cpp_frame()
+# test_relay_frame()
+test_relay_cpp_frame()
 # test_relay_cpp_frame_fast()
 # skylake()
 # haswell()
