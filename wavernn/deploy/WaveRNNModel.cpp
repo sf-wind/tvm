@@ -56,7 +56,7 @@ float WaveRNNModel::evaluate() {
   auto t_start = Clock::now();
   t_start = Clock::now();
 
-  int T = 1024;
+  int T = 100000;
   int ndim = 2;
   int dtype_code = kDLFloat;
   int dtype_bits = 32;
