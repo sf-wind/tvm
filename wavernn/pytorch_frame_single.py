@@ -278,6 +278,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
     fc1factored.weight[:, :] = fc1.weight[:, :rnn_dims]
     fc1factored.bias[:] = fc1.bias[:]
 
+    # import pdb; pdb.set_trace()
     if args.merged_gru:
         rnn2_weight = torch.cat(
                         (torch.cat((rnn1.weight_ih[: 2 * rnn_dims, :], rnn1.weight_hh[: 2 * rnn_dims, :]), dim=1),
@@ -364,7 +365,8 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         return new_gate + input_gate * (h - new_gate)
 
     def gru_cell2(cell2, x, h):
-        xht = sparse_dense(x, cell2.weight, cell2.bias)
+        xh = relay.concatenate((x, h), axis=1)
+        xht = sparse_dense(xh, cell2.weight, cell2.bias)
         xht_split = relay.split(xht, indices_or_sections=4, axis=1)
         reset_gate = approx_sigmoid(xht_split[0])
         input_gate = approx_sigmoid(xht_split[1])
