@@ -283,7 +283,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         rnn2_weight = torch.cat(
                         (torch.cat((rnn1.weight_ih[: 2 * rnn_dims, :], rnn1.weight_hh[: 2 * rnn_dims, :]), dim=1),
                          torch.cat((rnn1.weight_ih[2 * rnn_dims: , :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
-                         torch.cat((rnn1.weight_hh[2 * rnn_dims: , :], torch.zeros(rnn_dims, rnn_dims)), dim=1)), dim=0).detach().numpy()
+                         torch.cat((torch.zeros(rnn_dims, rnn_dims), rnn1.weight_hh[2 * rnn_dims: , :]), dim=0).detach().numpy()
         rnn2_bias = torch.cat(
                         (torch.add(rnn1.bias_ih[:2 * rnn_dims], rnn1.bias_hh[:2 * rnn_dims]),
                          rnn1.bias_ih[2 * rnn_dims:],
@@ -367,7 +367,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
     def gru_cell2(cell2, x, h):
         xh = relay.concatenate((x, h), axis=1)
         xht = sparse_dense(xh, cell2.weight, cell2.bias)
-        xht_split = relay.split(xht, indices_or_sections=4, axis=1)
+        xht_split = relay.split(xht, indices_or_sections=4, axis=0)
         reset_gate = approx_sigmoid(xht_split[0])
         input_gate = approx_sigmoid(xht_split[1])
         new_gate = approx_tanh(xht_split[2] + reset_gate * xht_split[3])
@@ -767,8 +767,8 @@ def test_load():
 
 # test_relay_cpp_frame()
 # test_relay_cpp_frame_fast()
-test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
-# test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
+# test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
+test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # skylake()
 # haswell()
 # test_load()
