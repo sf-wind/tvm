@@ -44,9 +44,10 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
             (K, M) = topi.util.get_const_tuple(data.shape)
         assert K % BS_C == 0
     oshape = (M, NB * BS_R)
+    # import pdb; pdb.set_trace()
     assert data.dtype in ("float32", "uint16"), data.dtype
     assert weight_indices.dtype in ("int32", "uint16"), weight_indices.dtype
-    assert weight_indptr.dtype == "int32", weight_indptr.dtype
+    assert weight_indptr.dtype in ("int32", "uint16"), weight_indptr.dtype
     assert weight_data.dtype in ("float32", "uint16", "int8"), weight_data.dtype
     NUM_AXIS = 4
     specify_range(cfg, 'axis_', NUM_AXIS)
@@ -70,8 +71,8 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
         # import pdb; pdb.set_trace()
-        row_start = weight_indptr[nb]
-        row_end = weight_indptr[nb + 1]
+        row_start = weight_indptr[nb].astype("int32")
+        row_end = weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx

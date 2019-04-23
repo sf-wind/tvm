@@ -425,13 +425,18 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
+        nnz = sp_arr.getnnz()
+        # import pdb; pdb.set_trace()
+        indptr_type = "int32"
+        if nnz < 2 ** 16:
+            indptr_type = "uint16"
         # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
         v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
         v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
-        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
+        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype=indptr_type)
         params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
         params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
-        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
+        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr.astype(indptr_type))
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
 
     xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
@@ -624,13 +629,18 @@ def build_faster_wavernn_module(target="llvm", wdtype="uint16", witype="int32", 
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
+        import pdb; pdb.set_trace()
+        nnz = sp_arr.getnnz()
+        indptr_type = "int32"
+        if nnz < 2 ** 16:
+            indptr_type = "uint16"
         # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
         v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
         v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
-        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype="int32")
+        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype=indptr_type)
         params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
         params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
-        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr)
+        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr.astype(indptr_type))
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
 
     xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
@@ -993,9 +1003,9 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
-test_relay_cpp_frame()
+# test_relay_cpp_frame()
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
-# test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
+test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # test_relay_cpp_frame_fast()
 # skylake()
 # haswell()

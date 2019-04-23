@@ -50,8 +50,8 @@ def sparse_dense_bsrmv(data, weight_data, weight_indices, weight_indptr):
     oshape = (M, NB, BS_R)
 
     def f(i, nb, r):
-        row_start = weight_indptr[nb]
-        row_end = weight_indptr[nb + 1]
+        row_start = weight_indptr[nb].astype("int32")
+        row_end = weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         jj = row_start + elem_idx
