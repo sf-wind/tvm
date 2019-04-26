@@ -384,11 +384,11 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
 
     def to_sparse(v, arr, BS_R=16, BS_C=1):
         def convert_sparse(sparse):
-            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ:
-                return sparse
             data = np.array(sparse.data)
             indices = np.array(sparse.indices)
             indptr = np.array(sparse.indptr)
+            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ:
+                return (data, indices, indptr)
             for i in range(indptr.shape[0]):
                 idx = indptr[i]
                 if idx % 2 == 1:
@@ -399,25 +399,25 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
                     for j in range(i, indptr.shape[0], 1):
                         indptr[j] = indptr[j] + 1
             indptr = indptr / 2
-            return sp.bsr_matrix((data, indices, indptr), sparse.shape)
+            return (data, indices, indptr)
 
         name = v.name_hint
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
-        sp_arr = convert_sparse(sp_arr)
+        (data, indices, indptr) = convert_sparse(sp_arr)
         nnz = sp_arr.getnnz()
         # import pdb; pdb.set_trace()
         indptr_type = "int32"
         if nnz < 2 ** 16:
             indptr_type = "uint16"
         # print("Sparsity achieved: {:.2f}%".format((1.0 - float(sp_arr.data.size) / arr.size) * 100))
-        v_data = relay.var(name + "_data", shape=sp_arr.data.shape, dtype=wdtype)
-        v_indices = relay.var(name + "_indices", shape=sp_arr.indices.shape, dtype=witype)
-        v_indptr = relay.var(name + "_indptr", shape=sp_arr.indptr.shape, dtype=indptr_type)
-        params[name + "_data"] = tvm.ndarray.array(sp_arr.data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(sp_arr.data))
-        params[name + "_indices"] = tvm.ndarray.array(sp_arr.indices.astype(witype))
-        params[name + "_indptr"] = tvm.ndarray.array(sp_arr.indptr.astype(indptr_type))
+        v_data = relay.var(name + "_data", shape=data.shape, dtype=wdtype)
+        v_indices = relay.var(name + "_indices", shape=indices.shape, dtype=witype)
+        v_indptr = relay.var(name + "_indptr", shape=indptr.shape, dtype=indptr_type)
+        params[name + "_data"] = tvm.ndarray.array(data.astype(wdtype)) if wdtype != "uint16" else tvm.ndarray.array(to_bf16(data))
+        params[name + "_indices"] = tvm.ndarray.array(indices.astype(witype))
+        params[name + "_indptr"] = tvm.ndarray.array(indptr.astype(indptr_type))
         return BSR(data=v_data, indices=v_indices, indptr=v_indptr)
 
     xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
@@ -690,10 +690,10 @@ def test_relay_cpp_frame_fast():
     with torch.no_grad():
         outs_ref, h1_ref = reference()
         outs_new, h1_new = factored_relay_cpp_frame_fast(a1, a2, m, x_0, h1_0)
-        np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-3, atol=1e-3)
         print(h1_ref, h1_new)
         print(outs_ref, outs_new)
-        np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-3, atol=1e-3)
 
 def test(target):
     args0 = {}
@@ -824,9 +824,9 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
-test_relay_frame_fast()
+# test_relay_frame_fast()
 # test_relay_cpp_frame()
-# test_relay_cpp_frame_fast()
+test_relay_cpp_frame_fast()
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
 # test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # skylake()
