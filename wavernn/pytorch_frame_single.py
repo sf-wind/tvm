@@ -97,12 +97,12 @@ fc1 = nn.Linear(rnn_dims + aux_dims, fc_dims)
 fc2 = nn.Linear(fc_dims, n_classes)
 
 
-rnn1.weight_ih[:, :] = torch.tensor(sparsify(rnn1.weight_ih.detach().numpy(), BS_R=16, BS_C=1, density=0.05))
-rnn1.weight_hh[:, :] = torch.tensor(sparsify(rnn1.weight_hh.detach().numpy(), BS_R=16, BS_C=1, density=0.05))
+rnn1.weight_ih[:, :] = torch.tensor(sparsify(rnn1.weight_ih.detach().numpy(), BS_R=16, BS_C=1, density=0.06))
+rnn1.weight_hh[:, :] = torch.tensor(sparsify(rnn1.weight_hh.detach().numpy(), BS_R=16, BS_C=1, density=0.06))
 
 fc2.weight[:, :] = torch.tensor(sparsify(fc2.weight.detach().numpy(), BS_R=16, BS_C=1, density=0.2))
 
-fc1.weight[:, :rnn_dims] = torch.tensor(sparsify(fc1.weight[:, :rnn_dims].detach().numpy(), BS_R=16, BS_C=1, density=0.05))
+fc1.weight[:, :rnn_dims] = torch.tensor(sparsify(fc1.weight[:, :rnn_dims].detach().numpy(), BS_R=16, BS_C=1, density=0.06))
 
 def tvm_random_seed(seed):
     tvm.get_global_func("tvm.contrib.wavernn.set_seed")(seed)
