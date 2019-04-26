@@ -387,7 +387,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
             data = np.array(sparse.data)
             indices = np.array(sparse.indices)
             indptr = np.array(sparse.indptr)
-            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ:
+            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ or sdense != "True":
                 return (data, indices, indptr)
             for i in range(indptr.shape[0]):
                 idx = indptr[i]
@@ -406,6 +406,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
         (data, indices, indptr) = convert_sparse(sp_arr)
+        # import pdb; pdb.set_trace()
         nnz = sp_arr.getnnz()
         # import pdb; pdb.set_trace()
         indptr_type = "int32"
@@ -627,7 +628,7 @@ def factored_relay_cpp_frame_fast(a1, a2, m, x_0, h1_0):
     tvm_random_seed(10)
     (x, h1) = (tvm.ndarray.array(x_0), tvm.ndarray.array(h1_0))
     T = a1.shape[1]
-    (graph, lib, params) = build_fast_wavernn_module(profile=False)
+    (graph, lib, params) = build_fast_wavernn_module(profile=False, sdense=args.sdense)
     import tempfile
     with tempfile.NamedTemporaryFile(delete=False, prefix="tvm_model_lib", suffix=".so") as lib_f:
         lib.export_library(lib_f.name)

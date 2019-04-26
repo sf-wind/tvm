@@ -73,11 +73,12 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
         # import pdb; pdb.set_trace()
+        multi_elem = 2 if EVEN_ENTRIES else 1
         row_start = weight_indptr[nb].astype("int32")
         row_end = weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
-        elem = row_start + elem_idx
+        elem = multi_elem * row_start + multi_elem * elem_idx
         weight_val = weight_data[elem, r, bs_c]
         if weight_data.dtype == "uint16":
             weight_val = tvm_from_bf16(weight_val)
@@ -94,7 +95,7 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
         else:
             x_val = x_val.astype("float32")
         if EVEN_ENTRIES:
-            elem_1 = row_start + elem_idx + 1
+            elem_1 = elem + 1
             weight_val_1 = weight_data[elem_1, r, bs_c]
             if weight_data.dtype == "uint16":
                 weight_val_1 = tvm_from_bf16(weight_val_1)
