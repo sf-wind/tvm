@@ -73,9 +73,8 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
         # import pdb; pdb.set_trace()
-        mul_elem = 2 if EVEN_ENTRIES else 1
-        row_start = mul_elem * weight_indptr[nb].astype("int32")
-        row_end = mul_elem * weight_indptr[nb + 1].astype("int32")
+        row_start = weight_indptr[nb].astype("int32")
+        row_end = weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
@@ -94,7 +93,27 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
             x_val = tvm_from_bf16(x_val)
         else:
             x_val = x_val.astype("float32")
-        return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
+        if EVEN_ENTRIES:
+            elem_1 = row_start + elem_idx + 1
+            weight_val_1 = weight_data[elem_1, r, bs_c]
+            if weight_data.dtype == "uint16":
+                weight_val_1 = tvm_from_bf16(weight_val_1)
+            else:
+                weight_val_1 = weight_val_1.astype("float32")
+            if data_layout == "IN":
+                x_val_1 = X[weight_indices[elem_1] * BS_C + bs_c, i]
+            elif cfg['align_data'].val:
+                x_val_1 = X[i, weight_indices[elem_1], bs_c]
+            else:
+                x_val_1 = X[i, weight_indices[elem_1] * BS_C + bs_c]
+            if data.dtype == "uint16":
+                x_val_1 = tvm_from_bf16(x_val_1)
+            else:
+                x_val_1 = x_val_1.astype("float32")
+        if EVEN_ENTRIES:
+            return tvm.sum(weight_val * x_val + weight_val_1 * x_val_1, axis=[elem_idx, bs_c])
+        else:
+            return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
     Y = tvm.compute((M, NB, BS_R), f,
         name="sdense_block",
         tag = "sdense_block")
