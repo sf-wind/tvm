@@ -537,6 +537,33 @@ def factored_relay_frame(a1, a2, m, x_0, h1_0):
         outs.append(x.asnumpy()[0][0])
     return outs, h1.asnumpy()
 
+def factored_relay_frame_fast(a1, a2, m, x_0, h1_0):
+    tvm_random_seed(10)
+    (x, h1) = (tvm.ndarray.array(x_0), tvm.ndarray.array(h1_0))
+    outs = []
+    T = a1.shape[1]
+    (graph, lib, params) = build_wavernn_module_fast()
+    module = graph_runtime.create(graph, lib, tvm.cpu(0))
+    module.set_input(**params)
+
+    I_residual = m[0] @ I.weight[:, 1:1 + feat_dims].transpose(1, 0) + a1[0] @ I.weight[:, 1 + feat_dims:].transpose(1, 0)
+    fc1_residual = a2[0] @ fc1.weight[:, rnn_dims:].transpose(1, 0)
+
+    for t in range(T):
+        inputs = {
+            "x": x,
+            "h1": h1,
+            "I_residual": tvm.ndarray.array(I_residual[t:t+1].detach().numpy()),
+            "fc1_residual": tvm.ndarray.array(fc1_residual[t:t+1].detach().numpy()),
+        }
+
+        module.set_input(**inputs)
+        module.run()
+        (x_prob, h1) = module.get_output(0), module.get_output(1)
+        x = tvm.ndarray.array(sample_proba(torch.tensor(x_prob.asnumpy())))
+        outs.append(x.asnumpy()[0][0])
+    return outs, h1.asnumpy()
+
 def factored_relay_cpp_frame(a1, a2, m, x_0, h1_0):
     tvm_random_seed(10)
     (x, h1) = (tvm.ndarray.array(x_0), tvm.ndarray.array(h1_0))
@@ -622,6 +649,13 @@ def test_relay_frame():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+def test_relay_frame_fast():
+    with torch.no_grad():
+        outs_ref, h1_ref = reference()
+        outs_new, h1_new = factored_relay_frame_fast(a1, a2, m, x_0, h1_0)
+        np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
+        np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
+
 def test_relay_cpp_frame():
     with torch.no_grad():
         outs_ref, h1_ref = reference()
@@ -673,7 +707,7 @@ def test(target):
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
 
 def skylake():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense="True", profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense=args.sdense, profile=True)
     with open(
             "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -692,22 +726,23 @@ def skylake():
 
 def haswell():
     # import pdb; pdb.set_trace()
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense="True", profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=core-avx2", wdtype="uint16", witype="uint16", sdense="True", profile=True)
     with open(
             "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
         f.write(graph)
-
+    with open(
+            "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.so".format(**globals()),
+            "wb") as f:
+        lib.export_library(f.name)
     with open(
             "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_params.bin".format(**globals()),
             "wb") as f:
         f.write(relay.save_param_dict(params))
 
+    (graph, lib, params) = build_fast_wavernn_module("llvm --system-lib -mcpu=core-avx2", wdtype="uint16", witype="uint16", sdense="True", profile=True)
     lib.save("hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.o".format(**globals()))
-    with open(
-            "hsw_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_lib.so".format(**globals()),
-            "wb") as f:
-        lib.export_library(f.name)
+
 
 def load_tvm(graph_name, lib_name, params_name):
     with open(graph_name, "r") as f:
@@ -766,10 +801,11 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+test_relay_frame_fast()
 # test_relay_cpp_frame()
-test_relay_cpp_frame_fast()
+# test_relay_cpp_frame_fast()
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
-test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
+# test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # skylake()
 # haswell()
 # test_load()
