@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default='cpu')
 parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
+parser.add_argument("--verify", action="store_true")
 parser.add_argument("--align_entries", type=int, default=1)
 parser.add_argument("--merged_gru", action="store_true")
 parser.add_argument("--num_threads", type=int, default=0)
@@ -829,9 +830,11 @@ def test_load():
 
 # test_relay_frame_fast()
 # test_relay_cpp_frame()
-test_relay_cpp_frame_fast()
+if args.verify:
+    test_relay_cpp_frame_fast()
+else:
 # test("llvm -mcpu=core-avx2 -target=x86_64-linux-gnu")
-# test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
+    test("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu")
 # skylake()
 # haswell()
 # test_load()
