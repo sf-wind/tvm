@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default='cpu')
 parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
+parser.add_argument("--even_entries", action="store_true")
 parser.add_argument("--merged_gru", action="store_true")
 parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
@@ -39,6 +40,9 @@ parser.add_argument("--lib", type=str)
 parser.add_argument("--params", type=str)
 
 args = parser.parse_args()
+
+if args.even_entries:
+    os.environ["TVM_SDENSE_EVEN_ENTRIES"] = "True"
 
 if args.num_threads > 0:
     num_threads = args.num_threads
@@ -379,10 +383,29 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         return ((x.view('<u4') + 2 ** 15) >> 16).astype("uint16")
 
     def to_sparse(v, arr, BS_R=16, BS_C=1):
+        def convert_sparse(sparse):
+            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ:
+                return sparse
+            data = np.array(sparse.data)
+            indices = np.array(sparse.indices)
+            indptr = np.array(sparse.indptr)
+            for i in range(indptr.shape[0]):
+                idx = indptr[i]
+                if idx % 2 == 1:
+                    # not efficient
+                    data = np.insert(data, idx, np.zeros(data[idx-1].shape), axis=0)
+                    indices = np.insert(indices, idx, indices[idx-1], axis=0)
+                    # not efficient
+                    for j in range(i, indptr.shape[0], 1):
+                        indptr[j] = indptr[j] + 1
+            indptr = indptr / 2
+            return sp.bsr_matrix((data, indices, indptr), sparse.shape)
+
         name = v.name_hint
         (N, K) = v.type_annotation.concrete_shape
         assert (N, K) == arr.shape
         sp_arr = sp.bsr_matrix(arr, blocksize=(BS_R, BS_C))
+        sp_arr = convert_sparse(sp_arr)
         nnz = sp_arr.getnnz()
         # import pdb; pdb.set_trace()
         indptr_type = "int32"

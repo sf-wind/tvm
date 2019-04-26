@@ -27,6 +27,8 @@ def specify_range(cfg, prefix, num):
 def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
                    data_layout, kernel_layout):
     import topi
+    EVEN_ENTRIES = True if "TVM_SDENSE_EVEN_ENTRIES" in os.environ else False
+
     # import pdb; pdb.set_trace()
     (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
     (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
@@ -71,8 +73,9 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
         # import pdb; pdb.set_trace()
-        row_start = weight_indptr[nb].astype("int32")
-        row_end = weight_indptr[nb + 1].astype("int32")
+        mul_elem = 2 if EVEN_ENTRIES else 1
+        row_start = mul_elem * weight_indptr[nb].astype("int32")
+        row_end = mul_elem * weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
         elem = row_start + elem_idx
