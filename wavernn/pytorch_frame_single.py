@@ -542,7 +542,7 @@ def factored_relay_frame_fast(a1, a2, m, x_0, h1_0):
     (x, h1) = (tvm.ndarray.array(x_0), tvm.ndarray.array(h1_0))
     outs = []
     T = a1.shape[1]
-    (graph, lib, params) = build_wavernn_module_fast()
+    (graph, lib, params) = build_fast_wavernn_module()
     module = graph_runtime.create(graph, lib, tvm.cpu(0))
     module.set_input(**params)
 
