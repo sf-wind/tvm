@@ -251,7 +251,7 @@ def schedule_sdense_sch(s, cfg, op, out):
         # s[out].unroll(yo)
         if num_threads > 1:
             s[out].parallel(yo)
-        s[out].unroll(yi)
+        # s[out].unroll(yi)
         s[op_o].compute_at(s[out], yo)
         s[Y].compute_at(s[out], yo)
     else:
