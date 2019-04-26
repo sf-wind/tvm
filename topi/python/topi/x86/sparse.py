@@ -249,16 +249,11 @@ def schedule_sdense_sch(s, cfg, op, out):
         # s[Y].compute_at(s[out], yo)
         s[out].vectorize(yi)
         # s[out].unroll(yo)
-        SPLIT_NUM = get_const_int(split_axis.dom.extent)
-        if SPLIT_NUM < 4 * 32 or num_threads == 1:
-            yoi = yo
-        else:
-            p = num_threads if num_threads < 4 else 4
-            (yoo, yoi) = s[out].split(yo, nparts=p)
-            s[out].parallel(yoo)
-        s[out].unroll(yoi)
-        s[op_o].compute_at(s[out], yoi)
-        s[Y].compute_at(s[out], yoi)
+        if num_threads > 1:
+            s[out].parallel(yo)
+        s[out].unroll(yi)
+        s[op_o].compute_at(s[out], yo)
+        s[Y].compute_at(s[out], yo)
     else:
         (noo, noi) = s[op].split(no, BS_R)
         s[Y].compute_at(s[op], noo)
