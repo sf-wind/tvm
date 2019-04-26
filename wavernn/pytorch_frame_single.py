@@ -18,7 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--device", type=str, default='cpu')
 parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
-parser.add_argument("--even_entries", action="store_true")
+parser.add_argument("--align_entries", type=int, default=1)
 parser.add_argument("--merged_gru", action="store_true")
 parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
@@ -41,8 +41,9 @@ parser.add_argument("--params", type=str)
 
 args = parser.parse_args()
 
-if args.even_entries:
-    os.environ["TVM_SDENSE_EVEN_ENTRIES"] = "True"
+if args.align_entries:
+    align_entries = args.align_entries
+    os.environ["TVM_SDENSE_ALIGN_ENTRIES"] = str(args.align_entries)
 
 if args.num_threads > 0:
     num_threads = args.num_threads
@@ -387,18 +388,19 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
             data = np.array(sparse.data)
             indices = np.array(sparse.indices)
             indptr = np.array(sparse.indptr)
-            if "TVM_SDENSE_EVEN_ENTRIES" not in os.environ or sdense != "True":
+            if align_entries == 1 or sdense != "True":
                 return (data, indices, indptr)
             for i in range(indptr.shape[0]):
                 idx = indptr[i]
-                if idx % 2 == 1:
+                while idx % align_entries != 0:
                     # not efficient
                     data = np.insert(data, idx, np.zeros(data[idx-1].shape), axis=0)
                     indices = np.insert(indices, idx, indices[idx-1], axis=0)
                     # not efficient
                     for j in range(i, indptr.shape[0], 1):
                         indptr[j] = indptr[j] + 1
-            indptr = indptr / 2
+                    idx = indptr[i]
+            indptr = indptr / align_entries
             return (data, indices, indptr)
 
         name = v.name_hint

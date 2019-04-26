@@ -27,7 +27,8 @@ def specify_range(cfg, prefix, num):
 def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
                    data_layout, kernel_layout):
     import topi
-    EVEN_ENTRIES = True if "TVM_SDENSE_EVEN_ENTRIES" in os.environ else False
+    ALIGN_ENTRIES = int(os.environ["TVM_SDENSE_ALIGN_ENTRIES"]) \
+        if "TVM_SDENSE_ALIGN_ENTRIES" in os.environ else 1
 
     # import pdb; pdb.set_trace()
     (NUM, BS_R, BS_C) = topi.util.get_const_tuple(weight_data.shape)
@@ -73,48 +74,34 @@ def sdense_compute(cfg, data, weight_data, weight_indices, weight_indptr,
     bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
     def f(i, nb, r):
         # import pdb; pdb.set_trace()
-        multi_elem = 2 if EVEN_ENTRIES else 1
         row_start = weight_indptr[nb].astype("int32")
         row_end = weight_indptr[nb + 1].astype("int32")
         row_elems = row_end - row_start
         elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
-        elem = multi_elem * row_start + multi_elem * elem_idx
-        weight_val = weight_data[elem, r, bs_c]
-        if weight_data.dtype == "uint16":
-            weight_val = tvm_from_bf16(weight_val)
-        else:
-            weight_val = weight_val.astype("float32")
-        if data_layout == "IN":
-            x_val = X[weight_indices[elem] * BS_C + bs_c, i]
-        elif cfg['align_data'].val:
-            x_val = X[i, weight_indices[elem], bs_c]
-        else:
-            x_val = X[i, weight_indices[elem] * BS_C + bs_c]
-        if data.dtype == "uint16":
-            x_val = tvm_from_bf16(x_val)
-        else:
-            x_val = x_val.astype("float32")
-        if EVEN_ENTRIES:
-            elem_1 = elem + 1
-            weight_val_1 = weight_data[elem_1, r, bs_c]
+        elem_base = ALIGN_ENTRIES * row_start + ALIGN_ENTRIES * elem_idx
+        comp = None
+        for idx in range(ALIGN_ENTRIES):
+            elem = elem_base + idx
+            weight_val = weight_data[elem, r, bs_c]
             if weight_data.dtype == "uint16":
-                weight_val_1 = tvm_from_bf16(weight_val_1)
+                weight_val = tvm_from_bf16(weight_val)
             else:
-                weight_val_1 = weight_val_1.astype("float32")
+                weight_val = weight_val.astype("float32")
             if data_layout == "IN":
-                x_val_1 = X[weight_indices[elem_1] * BS_C + bs_c, i]
+                x_val = X[weight_indices[elem] * BS_C + bs_c, i]
             elif cfg['align_data'].val:
-                x_val_1 = X[i, weight_indices[elem_1], bs_c]
+                x_val = X[i, weight_indices[elem], bs_c]
             else:
-                x_val_1 = X[i, weight_indices[elem_1] * BS_C + bs_c]
+                x_val = X[i, weight_indices[elem] * BS_C + bs_c]
             if data.dtype == "uint16":
-                x_val_1 = tvm_from_bf16(x_val_1)
+                x_val = tvm_from_bf16(x_val)
             else:
-                x_val_1 = x_val_1.astype("float32")
-        if EVEN_ENTRIES:
-            return tvm.sum(weight_val * x_val + weight_val_1 * x_val_1, axis=[elem_idx, bs_c])
-        else:
-            return tvm.sum(weight_val * x_val, axis=[elem_idx, bs_c])
+                x_val = x_val.astype("float32")
+            if comp is None:
+                comp = weight_val * x_val
+            else:
+                comp = comp + weight_val * x_val
+        return tvm.sum(comp, axis=[elem_idx, bs_c])
     Y = tvm.compute((M, NB, BS_R), f,
         name="sdense_block",
         tag = "sdense_block")
