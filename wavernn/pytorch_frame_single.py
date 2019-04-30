@@ -39,6 +39,7 @@ parser.add_argument("--sdense", type=str, default="False",
 parser.add_argument("--graph", type=str)
 parser.add_argument("--lib", type=str)
 parser.add_argument("--params", type=str)
+parser.add_argument("--real_data", action="store_true")
 
 args = parser.parse_args()
 
@@ -55,6 +56,7 @@ if args.debug:
     logging.basicConfig(level=logging.DEBUG)
 else:
     import tvm.contrib.graph_runtime as graph_runtime
+
 
 wdtype = args.wdtype
 witype = args.witype
@@ -92,10 +94,14 @@ m = torch.randn(1, T, feat_dims)
 a1 = torch.randn(1, T, aux_dims)
 a2 = torch.randn(1, T, aux_dims)
 
-I = nn.Linear(feat_dims + aux_dims + 1, rnn_dims)
-rnn1 = nn.GRUCell(rnn_dims, rnn_dims)
-fc1 = nn.Linear(rnn_dims + aux_dims, fc_dims)
-fc2 = nn.Linear(fc_dims, n_classes)
+if args.real_data:
+    import data_loader
+    (I, rnn1, fc1, fc2) = data_loader.load_pytorch_params()
+else:
+    I = nn.Linear(feat_dims + aux_dims + 1, rnn_dims)
+    rnn1 = nn.GRUCell(rnn_dims, rnn_dims)
+    fc1 = nn.Linear(rnn_dims + aux_dims, fc_dims)
+    fc2 = nn.Linear(fc_dims, n_classes)
 
 
 rnn1.weight_ih[:, :] = torch.tensor(sparsify(rnn1.weight_ih.detach().numpy(), BS_R=16, BS_C=1, density=0.06))
@@ -734,7 +740,7 @@ def test(target):
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
 
 def skylake():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype="uint16", witype="uint16", sdense=args.sdense, profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype=args.wdtype, witype="uint16", sdense=args.sdense, profile=True)
     with open(
             "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
