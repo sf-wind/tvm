@@ -20,7 +20,8 @@ parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--verify", action="store_true")
 parser.add_argument("--align_entries", type=int, default=1)
-parser.add_argument("--merged_gru", action="store_true")
+parser.add_argument("--merged_gru", type=str, default="interleaving",
+                    choices=["simple", "interleaving"])
 parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
 parser.add_argument("--bs_r", type=int, default=0)
@@ -290,24 +291,33 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
     fc1factored.bias[:] = fc1.bias[:]
 
     # import pdb; pdb.set_trace()
-    if args.merged_gru:
-        rnn2_weight = torch.cat(
-                        (torch.cat((rnn1.weight_ih[: 2 * rnn_dims, :], rnn1.weight_hh[: 2 * rnn_dims, :]), dim=1),
-                         torch.cat((rnn1.weight_ih[2 * rnn_dims: , :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
-                         torch.cat((torch.zeros(rnn_dims, rnn_dims), rnn1.weight_hh[2 * rnn_dims: , :]), dim=1)),
-                         dim=0).detach().numpy()
-        rnn2_bias = torch.cat(
-                        (torch.add(rnn1.bias_ih[:2 * rnn_dims], rnn1.bias_hh[:2 * rnn_dims]),
-                         rnn1.bias_ih[2 * rnn_dims:],
-                         rnn1.bias_hh[2 * rnn_dims:])).detach().numpy()
+    if args.merged_gru is not None:
+        if args.merged_gru == "interleaving":
+            rnn1_weight = torch.cat(
+                            (torch.cat((rnn1.weight_ih[: 2 * rnn_dims, :], rnn1.weight_hh[: 2 * rnn_dims, :]), dim=1),
+                             torch.cat((rnn1.weight_ih[2 * rnn_dims: , :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
+                             torch.cat((torch.zeros(rnn_dims, rnn_dims), rnn1.weight_hh[2 * rnn_dims: , :]), dim=1)),
+                             dim=0).detach().numpy()
+            rnn1_bias = torch.cat(
+                            (torch.add(rnn1.bias_ih[:2 * rnn_dims], rnn1.bias_hh[:2 * rnn_dims]),
+                             rnn1.bias_ih[2 * rnn_dims:],
+                             rnn1.bias_hh[2 * rnn_dims:])).detach().numpy()
+        else:
+            rnn1_weight = torch.cat(
+                            (torch.cat((rnn1.weight_ih, torch.zeros(rnn_dims * 3, rnn_dims)), dim=1),
+                             torch.cat((torch.zeros(rnn_dims * 3, rnn_dims), rnn1.weight_hh), dim=1)),
+                             dim=0).detach().numpy()
+            rnn1_bias = torch.cat(
+                            (rnn1.bias_ih,
+                             rnn1.bias_hh)).detach().numpy()
         params = {
             "I_W": tvm.ndarray.array(Ifactored.weight.detach().numpy()),
             "I_B": tvm.ndarray.array(Ifactored.bias.detach().numpy()),
             "fc1_B": tvm.ndarray.array(fc1factored.bias.detach().numpy()),
             "fc2_W": tvm.ndarray.array(fc2.weight.detach().numpy()),
             "fc2_B": tvm.ndarray.array(fc2.bias.detach().numpy()),
-            "rnn2_weight": tvm.ndarray.array(rnn2_weight),
-            "rnn2_bias": tvm.ndarray.array(rnn2_bias),
+            "rnn1_weight": tvm.ndarray.array(rnn1_weight),
+            "rnn1_bias": tvm.ndarray.array(rnn1_bias),
         }
     else:
         params = {
@@ -385,6 +395,15 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         new_gate = approx_tanh(xht_split[2] + reset_gate * xht_split[3])
         return new_gate + input_gate * (h - new_gate)
 
+    def gru_cell3(cell3, x, h):
+        xh = relay.concatenate((x, h), axis=1)
+        xht = sparse_dense(xh, cell2.weight, cell2.bias)
+        xht_split = relay.split(xht, indices_or_sections=6, axis=1)
+        reset_gate = approx_sigmoid(xht_split[0] + xht_split[3])
+        input_gate = approx_sigmoid(xht_split[1] + xht_split[4])
+        new_gate = approx_tanh(xht_split[2] + reset_gate * xht_split[5])
+        return new_gate + input_gate * (h - new_gate)
+
     def to_bf16(x):
         assert x.dtype == np.float32
         return ((x.view('<u4') + 2 ** 15) >> 16).astype("uint16")
@@ -431,13 +450,20 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
 
     xconcat_trns = dense(Rx, RI_W, RI_B) + RI_residual
 
-    if args.merged_gru:
+    if args.merged_gru == "interleaving":
         Cell = collections.namedtuple('Cell', ['weight', 'bias'])
-        Rrnn2 = Cell(
-            weight=to_sparse(relay.var("rnn2_weight", shape=(4 * rnn_dims, 2 * rnn_dims), dtype="float32"), rnn2_weight),
-            bias=relay.var("rnn2_bias", shape=(4 * rnn_dims, ), dtype="float32")
+        Rrnn1 = Cell(
+            weight=to_sparse(relay.var("rnn1_weight", shape=(4 * rnn_dims, 2 * rnn_dims), dtype="float32"), rnn1_weight),
+            bias=relay.var("rnn1_bias", shape=(4 * rnn_dims, ), dtype="float32")
         )
-        h1 = gru_cell2(Rrnn2, xconcat_trns, Rh1)
+        h1 = gru_cell2(Rrnn1, xconcat_trns, Rh1)
+    elif args.merged_gru == "simple":
+        Cell = collections.namedtuple('Cell', ['weight', 'bias'])
+        Rrnn1 = Cell(
+            weight=to_sparse(relay.var("rnn1_weight", shape=(6 * rnn_dims, 2 * rnn_dims), dtype="float32"), rnn1_weight),
+            bias=relay.var("rnn1_bias", shape=(6 * rnn_dims, ), dtype="float32")
+        )
+        h1 = gru_cell3(Rrnn1, xconcat_trns, Rh1)
     else:
         Cell = collections.namedtuple('Cell', ['weight_ih', 'weight_hh', 'bias_ih', 'bias_hh'])
         Rrnn1 = Cell(
