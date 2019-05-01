@@ -395,7 +395,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         new_gate = approx_tanh(xht_split[2] + reset_gate * xht_split[3])
         return new_gate + input_gate * (h - new_gate)
 
-    def gru_cell3(cell3, x, h):
+    def gru_cell3(cell2, x, h):
         xh = relay.concatenate((x, h), axis=1)
         xht = sparse_dense(xh, cell2.weight, cell2.bias)
         xht_split = relay.split(xht, indices_or_sections=6, axis=1)
