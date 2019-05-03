@@ -310,7 +310,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
                              torch.cat((torch.zeros(rnn_dims * 3, rnn_dims), rnn1.weight_hh), dim=1)),
                              dim=0).detach().numpy()
             rnn1_bias = torch.cat(
-                            (rnn1.bias_ih,
+                            (rnn1.bias_ih[:rnn_dims], rnn1.bias_ih[2 * rnn_dims:], rnn1.bias_ih[rnn_dims: 2 * rnn_dims],
                              rnn1.bias_hh)).detach().numpy()
         params = {
             "I_W": tvm.ndarray.array(Ifactored.weight.detach().numpy()),
