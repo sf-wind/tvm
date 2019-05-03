@@ -23,7 +23,7 @@
 #include <chrono>
 using namespace std::chrono;
 
-#define REPORT_TIME 1
+//#define REPORT_TIME 1
 
 const constexpr int kL1CacheBytes = 64;
 
