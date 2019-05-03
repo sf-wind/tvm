@@ -20,6 +20,8 @@
 #include <cstring>
 #include <memory>
 #include <sstream>
+#include <chrono>
+using namespace std::chrono;
 
 const constexpr int kL1CacheBytes = 64;
 
@@ -286,7 +288,11 @@ class ThreadPool {
     // use the master thread to run task 0
     if (exclude_worker0_) {
       TVMParallelGroupEnv* penv = &(tsk.launcher->env);
+      auto start = high_resolution_clock::now();
       if ((*tsk.launcher->flambda)(0, penv, cdata) == 0) {
+        auto stop = high_resolution_clock::now();
+        auto duration = duration_cast<microseconds>(stop - start);
+        std::cout << "Exec time 2: " << tsk.task_id << " : " << duration.count() << std::endl;
         tsk.launcher->SignalJobFinish();
       } else {
         tsk.launcher->SignalJobError(tsk.task_id);
@@ -320,7 +326,11 @@ class ThreadPool {
       CHECK(task.launcher != nullptr);
       TVMParallelGroupEnv* penv = &(task.launcher->env);
       void* cdata = task.launcher->cdata;
+      auto start = high_resolution_clock::now();
       if ((*task.launcher->flambda)(task.task_id, penv, cdata) == 0) {
+        auto stop = high_resolution_clock::now();
+        auto duration = duration_cast<microseconds>(stop - start);
+        std::cout << "Exec time: " << task.task_id << " : " << duration.count() << std::endl;
         task.launcher->SignalJobFinish();
       } else {
         task.launcher->SignalJobError(task.task_id);
