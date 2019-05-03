@@ -23,6 +23,8 @@
 #include <chrono>
 using namespace std::chrono;
 
+#define REPORT_TIME 1
+
 const constexpr int kL1CacheBytes = 64;
 
 namespace tvm {
@@ -288,11 +290,15 @@ class ThreadPool {
     // use the master thread to run task 0
     if (exclude_worker0_) {
       TVMParallelGroupEnv* penv = &(tsk.launcher->env);
+#if REPORT_TIME
       auto start = high_resolution_clock::now();
+#endif
       if ((*tsk.launcher->flambda)(0, penv, cdata) == 0) {
+#if REPORT_TIME
         auto stop = high_resolution_clock::now();
         auto duration = duration_cast<microseconds>(stop - start);
-        std::cout << "Exec time 2: " << tsk.task_id << " : " << duration.count() << std::endl;
+        printf("%d : %d\n", 0, duration.count());
+#endif
         tsk.launcher->SignalJobFinish();
       } else {
         tsk.launcher->SignalJobError(tsk.task_id);
@@ -326,11 +332,15 @@ class ThreadPool {
       CHECK(task.launcher != nullptr);
       TVMParallelGroupEnv* penv = &(task.launcher->env);
       void* cdata = task.launcher->cdata;
+#if REPORT_TIME
       auto start = high_resolution_clock::now();
+#endif
       if ((*task.launcher->flambda)(task.task_id, penv, cdata) == 0) {
+#if REPORT_TIME
         auto stop = high_resolution_clock::now();
         auto duration = duration_cast<microseconds>(stop - start);
-        std::cout << "Exec time: " << task.task_id << " : " << duration.count() << std::endl;
+        printf("%d : %ld\n", task.task_id, duration.count());
+#endif
         task.launcher->SignalJobFinish();
       } else {
         task.launcher->SignalJobError(task.task_id);
