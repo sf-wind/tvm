@@ -296,8 +296,8 @@ class ThreadPool {
       if ((*tsk.launcher->flambda)(0, penv, cdata) == 0) {
 #if REPORT_TIME
         auto stop = high_resolution_clock::now();
-        auto duration = duration_cast<microseconds>(stop - start);
-        printf("%d : %d\n", 0, duration.count());
+        auto duration = duration_cast<nanoseconds>(stop - start);
+        printf("%d : %ld\n", 0, duration.count());
 #endif
         tsk.launcher->SignalJobFinish();
       } else {
@@ -338,7 +338,7 @@ class ThreadPool {
       if ((*task.launcher->flambda)(task.task_id, penv, cdata) == 0) {
 #if REPORT_TIME
         auto stop = high_resolution_clock::now();
-        auto duration = duration_cast<microseconds>(stop - start);
+        auto duration = duration_cast<nanoseconds>(stop - start);
         printf("%d : %ld\n", task.task_id, duration.count());
 #endif
         task.launcher->SignalJobFinish();
