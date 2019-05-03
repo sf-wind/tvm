@@ -304,7 +304,9 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
                              rnn1.bias_hh[2 * rnn_dims:])).detach().numpy()
         else:
             rnn1_weight = torch.cat(
-                            (torch.cat((rnn1.weight_ih, torch.zeros(rnn_dims * 3, rnn_dims)), dim=1),
+                            (torch.cat((rnn1.weight_ih[: rnn_dims, :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
+                             torch.cat((rnn1.weight_ih[2 * rnn_dims:, :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
+                             torch.cat((rnn1.weight_ih[rnn_dims: 2 * rnn_dims, :], torch.zeros(rnn_dims, rnn_dims)), dim=1),
                              torch.cat((torch.zeros(rnn_dims * 3, rnn_dims), rnn1.weight_hh), dim=1)),
                              dim=0).detach().numpy()
             rnn1_bias = torch.cat(
@@ -400,8 +402,8 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
         xht = sparse_dense(xh, cell2.weight, cell2.bias)
         xht_split = relay.split(xht, indices_or_sections=6, axis=1)
         reset_gate = approx_sigmoid(xht_split[0] + xht_split[3])
-        input_gate = approx_sigmoid(xht_split[1] + xht_split[4])
-        new_gate = approx_tanh(xht_split[2] + reset_gate * xht_split[5])
+        input_gate = approx_sigmoid(xht_split[2] + xht_split[4])
+        new_gate = approx_tanh(xht_split[1] + reset_gate * xht_split[5])
         return new_gate + input_gate * (h - new_gate)
 
     def to_bf16(x):
