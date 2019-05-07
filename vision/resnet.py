@@ -118,9 +118,10 @@ def fc(x, linear, name, params):
     params[name + ".weight"] = linear.weight
     if linear.bias is not None:
         bias = relay.var(name + ".bias", shape=linear.bias.shape)
-        relay.nn.bias_add(c, bias)
+        c = relay.nn.bias_add(c, bias)
         params[name + ".bias"] = linear.bias
     return c
+
 
 def get_tvm_params(params):
     tvm_params = { k : tvm.nd.array(v.detach().numpy(), ctx)
@@ -151,7 +152,7 @@ class Bottleneck():
         x = conv(x, self.pbn.conv3, self.prefix + "." + "conv3", params)
         x = bn(x, self.pbn.bn3, self.prefix + "." + "bn3", params)
         if self.pbn.downsample:
-            x = downsample(x, self.pbn.downsample, self.prefix, params)
+            identity = downsample(identity, self.pbn.downsample, self.prefix, params)
         x = relay.add(x, identity)
         x = relay.nn.relu(x)
         return x
@@ -182,7 +183,7 @@ class Resnet():
         x = relay.nn.global_avg_pool2d(x)
         x = relay.squeeze(x)
         x = fc(x, self.pytorch_resnet.fc, "fc0", params)
-        return fc
+        return x
 # import pdb; pdb.set_trace()
 
 
