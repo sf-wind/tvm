@@ -314,7 +314,7 @@ module.get_output(0, ro)
 # import pdb; pdb.set_trace()
 tvm.testing.assert_allclose(ro.asnumpy(), res, rtol=1e-5, atol=1e-5)
 
-ftimer = module.module.time_evaluator("run", ctx, 1000)
+ftimer = module.module.time_evaluator("run", ctx, 100)
 for i in range(5):
     prof_res = ftimer()
     print("TVM time: ", prof_res.mean)
