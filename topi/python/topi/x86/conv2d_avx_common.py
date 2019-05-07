@@ -153,10 +153,13 @@ def _schedule_conv_NCHWc(s, cfg, data, conv_out, last):
 
     s[CC].compute_at(s[C], ow_chunk)
     _, oc_chunk, oh, ow, oc_block = s[CC].op.axis
-    ic, kh, kw = s[CC].op.reduce_axis
+    if len(s[CC].op.reduce_axis) == 4:
+        ic_chunk, ic_block, kh, kw = s[CC].op.reduce_axis
+    else:
+        ic, kh, kw = s[CC].op.reduce_axis
+        ic_chunk, ic_block = s[CC].split(ic, factor=ic_bn)
 
     ow_chunk, ow_block = s[CC].split(ow, factor=reg_n)
-    ic_chunk, ic_block = s[CC].split(ic, factor=ic_bn)
 
     if unroll_kw:
         s[CC].reorder(oc_chunk, oh, ow_chunk, ic_chunk, kh, ic_block, kw, ow_block, oc_block)

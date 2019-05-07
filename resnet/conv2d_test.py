@@ -116,11 +116,6 @@ def tune():
                 ]
             )
 
-if args.tune:
-    tune()
-    import sys
-    sys.exit()
-
 
 def build_graph():
     global func
@@ -158,7 +153,10 @@ func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 relay.ir_pass.infer_type(func)
 # print(func.astext(show_meta_data=False))
 
-
+if args.tune:
+    tune()
+    import sys
+    sys.exit()
 
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()

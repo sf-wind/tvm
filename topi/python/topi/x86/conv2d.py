@@ -287,6 +287,7 @@ def schedule_conv2d_nhwc(outs):
 # to be altered by the schedule selected.
 @autotvm.task.register("topi_x86_conv2d_NCHWc")
 def _topi_nn_conv2d_NCHWc(*args, **kwargs):
+    # import pdb; pdb.set_trace()
     assert not kwargs, "Do not support kwargs in template function call"
     args = deserialize_args(args)
 
@@ -323,7 +324,7 @@ def _topi_nn_conv2d_NCHWc(*args, **kwargs):
 
 @conv2d_alter_layout.register("cpu")
 def _alter_conv2d_layout(attrs, inputs, tinfo, F):
-
+    # import pdb; pdb.set_trace()
     copy_inputs = [s for s in inputs]
     new_attrs = {k : attrs[k] for k in attrs.keys()}
 
@@ -412,6 +413,7 @@ def _alter_conv2d_layout(attrs, inputs, tinfo, F):
 @autotvm.register_topi_compute(conv2d_NCHWc, 'cpu', 'direct')
 def _declaration_conv_NCHWc(cfg, data, kernel, strides,
                             padding, dilation, layout, out_layout, out_dtype):
+    # import pdb; pdb.set_trace()
     # layout and out_layout are not used here,
     # we keep them for debug convenience when dumping autotvm workload
     HPAD, WPAD = padding if isinstance(padding, (tuple, list)) else (padding, padding)
@@ -445,7 +447,14 @@ def _declaration_conv_NCHWc(cfg, data, kernel, strides,
     else:
         data_pad = data
 
-    ic = tvm.reduce_axis((0, in_channel), name='ic')
+    # the result is worse
+    if False and in_channel % ic_bn == 0:
+        ic_outer = tvm.reduce_axis((0, in_channel//ic_bn), name='ic_outer')
+        ic_inner = tvm.reduce_axis((0, ic_bn), name='ic_inner')
+        EXPLICIT_IC = True
+    else:
+        ic = tvm.reduce_axis((0, in_channel), name='ic')
+        EXPLICIT_IC = False
     kh = tvm.reduce_axis((0, kernel_height), name='kh')
     kw = tvm.reduce_axis((0, kernel_width), name='kw')
 
@@ -469,16 +478,25 @@ def _declaration_conv_NCHWc(cfg, data, kernel, strides,
                                    axis=[kh, kw, ic_outer, ic_f_inner, ic_s_inner]),
                            name='conv2d_NCHWc_int8', tag="conv2d_NCHWc_int8")
     # else: fp implementation
-    return tvm.compute(oshape, lambda n, oc_chunk, oh, ow, oc_block:
-                       tvm.sum(data_pad[n, ic//ic_bn, oh*HSTR+kh, ow*WSTR+kw,
-                                        ic%ic_bn].astype(out_dtype) *
-                               kernel[oc_chunk, ic//ic_bn, kh, kw, ic%ic_bn, oc_block],
-                               axis=[ic, kh, kw]),
-                       name='conv2d_NCHWc', tag="conv2d_NCHWc")
+    if EXPLICIT_IC:
+        return tvm.compute(oshape, lambda n, oc_chunk, oh, ow, oc_block:
+                           tvm.sum(data_pad[n, ic_outer, oh*HSTR+kh, ow*WSTR+kw,
+                                            ic_inner].astype(out_dtype) *
+                                   kernel[oc_chunk, ic_outer, kh, kw, ic_inner, oc_block],
+                                   axis=[ic_outer, ic_inner, kh, kw]),
+                           name='conv2d_NCHWc', tag="conv2d_NCHWc")
+    else:
+        return tvm.compute(oshape, lambda n, oc_chunk, oh, ow, oc_block:
+                           tvm.sum(data_pad[n, ic//ic_bn, oh*HSTR+kh, ow*WSTR+kw,
+                                            ic%ic_bn].astype(out_dtype) *
+                                   kernel[oc_chunk, ic//ic_bn, kh, kw, ic%ic_bn, oc_block],
+                                   axis=[ic, kh, kw]),
+                           name='conv2d_NCHWc', tag="conv2d_NCHWc")
 
 
 @autotvm.register_topi_schedule(generic.schedule_conv2d_NCHWc, 'cpu', ['direct'])
 def _schedule_conv2d_NCHWc(cfg, outs):
+    # import pdb; pdb.set_trace()
     """Create schedule for tensors"""
     s = tvm.create_schedule([x.op for x in outs])
     scheduled_ops = []
@@ -494,6 +512,7 @@ def _schedule_conv2d_NCHWc(cfg, outs):
                     traverse(tensor.op)
 
         if 'conv2d_NCHWc' in op.tag:
+            # import pdb; pdb.set_trace()
             conv_out = op.output(0)
             kernel = conv_out.op.input_tensors[1]
             data_vec = conv_out.op.input_tensors[0]
