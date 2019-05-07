@@ -31,7 +31,7 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
-parser.add_argument("--layer", type=int, default=1)
+parser.add_argument("--layer", type=int, default=-1)
 parser.add_argument("--sublayer", type=int, default=1)
 args = parser.parse_args()
 
@@ -61,41 +61,77 @@ dtype = "float32"
 pytorch_resnet = resnet152(pretrained=True)
 pytorch_resnet.eval()
 
-'''
-ishape = [BATCH, 3, 224, 224]
-
-input = torch.randn(ishape)
-
-with torch.no_grad():
-    output = pytorch_resnet(input)
-'''
-
-if args.layer == 1:
-    layer = pytorch_resnet.layer1
-elif args.layer == 2:
-    layer = pytorch_resnet.layer2
-elif args.layer == 3:
-    layer = pytorch_resnet.layer3
-elif args.layer == 4:
-    layer = pytorch_resnet.layer4
-else:
-    assert False, "Layer out of bound"
-
-sublayer = layer[args.sublayer]
-
-ishape = [BATCH, sublayer.conv1.in_channels, HEIGHT, WIDTH]
-# ishape = [1, 64, 1, 1]
-input = torch.randn(ishape)
-
-with torch.no_grad():
-    res = sublayer(input)
-
-oshape = res.shape
 # import pdb; pdb.set_trace()
 
+
+def conv(x, pbn_conv, name, params):
+    weight = relay.var(name + ".weight", shape=pbn_conv.weight.shape)
+    c = relay.nn.conv2d(x, weight,
+                        data_layout="NCHW", kernel_layout="OIHW",
+                        channels=pbn_conv.weight.shape[0],
+                        padding=pbn_conv.padding,
+                        strides=pbn_conv.stride,
+                        dilation=pbn_conv.dilation,
+                        groups=pbn_conv.groups,
+                        kernel_size=pbn_conv.kernel_size)
+    params[name + ".weight"] = pbn_conv.weight
+    if pbn_conv.bias is not None:
+        bias = relay.var(name + ".bias", shape=pbn_conv.bias.shape)
+        c = relay.nn.bias_add(c, bias)
+        params[name + ".bias"] = pbn_conv.bias
+    return c
+
+
+def bn(x, pbn_bn, name, params):
+    weight = relay.var(name + ".weight", shape=pbn_bn.weight.shape)
+    bias = relay.var(name + ".bias", shape=pbn_bn.bias.shape)
+    running_var = relay.var(name + ".running_var",
+                            shape=pbn_bn.running_var.shape)
+    running_mean = relay.var(name + ".running_mean",
+                             shape=pbn_bn.running_mean.shape)
+    c = relay.nn.batch_norm(x, weight, bias, running_mean, running_var,
+                            epsilon=pbn_bn.eps)
+    params[name + ".weight"] = pbn_bn.weight
+    params[name + ".bias"] = pbn_bn.bias
+    params[name + ".running_var"] = pbn_bn.running_var
+    params[name + ".running_mean"] = pbn_bn.running_mean
+    return c[0]
+
+
+def downsample(x, ds, prefix, params):
+    x = conv(x, ds[0], prefix + "." + "downsample.conv", params)
+    x = bn(x, ds[1], prefix + "." + "downsample.bn", params)
+    return x
+
+
+def maxpool(x, pool):
+    c = relay.nn.max_pool2d(x, pool_size=(pool.kernel_size, pool.kernel_size),
+                            strides=(pool.stride, pool.stride),
+                            padding=(pool.padding, pool.padding),
+                            ceil_mode=pool.ceil_mode)
+    return c
+
+
+def fc(x, linear, name, params):
+    weight = relay.var(name + ".weight", shape=linear.weight.shape)
+    c = relay.nn.dense(x, weight)
+    params[name + ".weight"] = linear.weight
+    if linear.bias is not None:
+        bias = relay.var(name + ".bias", shape=linear.bias.shape)
+        relay.nn.bias_add(c, bias)
+        params[name + ".bias"] = linear.bias
+    return c
+
+def get_tvm_params(params):
+    tvm_params = { k : tvm.nd.array(v.detach().numpy(), ctx)
+                  for k,v in params.items() if v is not None}
+    return tvm_params
+
+
 class Bottleneck():
-    def __init__(self, pbn):
+    def __init__(self, pbn, prefix):
         self.pbn = pbn
+        self.prefix = prefix
         self.inplanes = pbn.conv1.in_channels
         self.width = pbn.conv1.out_channels
         self.stride = pbn.conv2.stride
@@ -103,97 +139,51 @@ class Bottleneck():
         self.padding = pbn.conv2.padding
         self.dilation = pbn.conv2.dilation
         self.outplanes = pbn.conv3.out_channels
-        self.params = {
-            "conv1.weight": pbn.conv1.weight,
-            "conv1.bias": pbn.conv1.bias,
-            "bn1.weight": pbn.bn1.weight,
-            "bn1.bias": pbn.bn1.bias,
-            "bn1.running_var": pbn.bn1.running_var,
-            "bn1.running_mean": pbn.bn1.running_mean,
-            "conv2.weight": pbn.conv2.weight,
-            "conv2.bias": pbn.conv2.bias,
-            "bn2.weight": pbn.bn2.weight,
-            "bn2.bias": pbn.bn2.bias,
-            "bn2.running_var": pbn.bn2.running_var,
-            "bn2.running_mean": pbn.bn2.running_mean,
-            "conv3.weight": pbn.conv3.weight,
-            "conv3.bias": pbn.conv3.bias,
-            "bn3.weight": pbn.bn3.weight,
-            "bn3.bias": pbn.bn3.bias,
-            "bn3.running_var": pbn.bn3.running_var,
-            "bn3.running_mean": pbn.bn3.running_mean,
-        }
-        if pbn.downsample:
-            self.params["downsample.conv.weight"] = pbn.downsample[0].weight
-            self.params["downsample.conv.bias"] = pbn.downsample[0].bias
-            self.params["downsample.bn.weight"] = pbn.downsample[1].weight
-            self.params["downsample.bn.bias"] = pbn.downsample[1].bias
-            self.params["downsample.bn.running_var"] = pbn.downsample[1].running_var
-            self.params["downsample.bn.running_mean"] = pbn.downsample[1].running_mean
 
-    def get_tvm_params(self):
-        tvm_params = { k : tvm.nd.array(v.detach().numpy(), ctx)
-                      for k,v in self.params.items() if v is not None}
-        return tvm_params
-
-    def get_tvm_block(self, x):
-        def conv(x, pbn_conv, name):
-            weight = relay.var(name + ".weight", shape=pbn_conv.weight.shape)
-            c = relay.nn.conv2d(x, weight,
-                                data_layout="NCHW", kernel_layout="OIHW",
-                                channels=pbn_conv.weight.shape[0],
-                                padding=pbn_conv.padding,
-                                strides=pbn_conv.stride,
-                                dilation=pbn_conv.dilation,
-                                groups=pbn_conv.groups,
-                                kernel_size=pbn_conv.kernel_size)
-            if pbn_conv.bias is not None:
-                bias = relay.var(name + ".bias", shape=pbn_conv.bias.shape)
-                c = relay.nn.bias_add(c, bias)
-            return c
-
-        def bn(x, pbn_bn, name):
-            weight = relay.var(name + ".weight", shape=pbn_bn.weight.shape)
-            bias = relay.var(name + ".bias", shape=pbn_bn.bias.shape)
-            running_var = relay.var(name + ".running_var",
-                                    shape=pbn_bn.running_var.shape)
-            running_mean = relay.var(name + ".running_mean",
-                                     shape=pbn_bn.running_mean.shape)
-            c = relay.nn.batch_norm(x, weight, bias, running_mean, running_var,
-                                    epsilon=pbn_bn.eps)
-            return c[0]
-
-        def downsample(x, ds):
-            x = conv(x, ds[0], "downsample.conv")
-            x = bn(x, ds[1], "downsample.bn")
-            return x
-
+    def get_tvm(self, x, params):
         identity = relay.copy(x)
-        x = conv(x, self.pbn.conv1, "conv1")
-        x = bn(x, self.pbn.bn1, "bn1")
+        x = conv(x, self.pbn.conv1, self.prefix + "." + "conv1", params)
+        x = bn(x, self.pbn.bn1, self.prefix + "." + "bn1", params)
         x = relay.nn.relu(x)
-        x = conv(x, self.pbn.conv2, "conv2")
-        x = bn(x, self.pbn.bn2, "bn2")
+        x = conv(x, self.pbn.conv2, self.prefix + "." + "conv2", params)
+        x = bn(x, self.pbn.bn2, self.prefix + "." + "bn2", params)
         x = relay.nn.relu(x)
-        x = conv(x, self.pbn.conv3, "conv3")
-        x = bn(x, self.pbn.bn3, "bn3")
+        x = conv(x, self.pbn.conv3, self.prefix + "." + "conv3", params)
+        x = bn(x, self.pbn.bn3, self.prefix + "." + "bn3", params)
         if self.pbn.downsample:
-            x = downsample(x, self.pbn.downsample)
+            x = downsample(x, self.pbn.downsample, self.prefix, params)
         x = relay.add(x, identity)
         x = relay.nn.relu(x)
         return x
 
 
+class Resnet():
+    def __init__(self, pytorch_resnet):
+        self.pytorch_resnet = pytorch_resnet
 
+    def make_layer(self, x, pytorch_layer, prefix, params):
+        num = len(pytorch_layer)
+        for i in range(num):
+            pytorch_block = pytorch_layer[i]
+            name = prefix + ".block" + str(i)
+            block = Bottleneck(pytorch_block, name)
+            x = block.get_tvm(x, params)
+        return x
+
+    def get_tvm(self, x, params):
+        x = conv(x, self.pytorch_resnet.conv1, "layer0.conv1", params)
+        x = bn(x, self.pytorch_resnet.bn1, "layer0.bn1", params)
+        x = relay.nn.relu(x)
+        x = maxpool(x, self.pytorch_resnet.maxpool)
+        x = self.make_layer(x, self.pytorch_resnet.layer1, "layer1", params)
+        x = self.make_layer(x, self.pytorch_resnet.layer2, "layer2", params)
+        x = self.make_layer(x, self.pytorch_resnet.layer3, "layer3", params)
+        x = self.make_layer(x, self.pytorch_resnet.layer4, "layer4", params)
+        x = relay.nn.global_avg_pool2d(x)
+        x = relay.squeeze(x)
+        x = fc(x, self.pytorch_resnet.fc, "fc0", params)
+        return fc
 # import pdb; pdb.set_trace()
-
-tvm_bottleneck = Bottleneck(sublayer)
-
-params = tvm_bottleneck.get_tvm_params()
-
-inputs = {
-    "data": tvm.nd.array(input.detach().numpy().astype(dtype), ctx)
-}
 
 
 def tune():
@@ -257,17 +247,54 @@ def build_graph():
 
 # import pdb; pdb.set_trace()
 
-data = relay.var("data", shape=ishape, dtype=dtype)
+if args.layer < 0:
+    ishape = [BATCH, 3, 224, 224]
+
+    input = torch.randn(ishape)
+
+    with torch.no_grad():
+        res = pytorch_resnet(input)
+    model = Resnet(pytorch_resnet)
+
+else:
+    if args.layer == 1:
+        layer = pytorch_resnet.layer1
+    elif args.layer == 2:
+        layer = pytorch_resnet.layer2
+    elif args.layer == 3:
+        layer = pytorch_resnet.layer3
+    elif args.layer == 4:
+        layer = pytorch_resnet.layer4
+    else:
+        assert False, "Layer out of bound"
+
+    sublayer = layer[args.sublayer]
+
+    ishape = [BATCH, sublayer.conv1.in_channels, HEIGHT, WIDTH]
+
+    input = torch.randn(ishape)
+
+    with torch.no_grad():
+        res = sublayer(input)
+    model = Bottleneck(sublayer, "layer" + str(args.layer))
+
 # import pdb; pdb.set_trace()
-# zero = relay.var("zero", shape=(M, N), dtype=dtype)
-outputs = tvm_bottleneck.get_tvm_block(data)
+oshape = res.shape
+data = relay.var("data", shape=ishape, dtype=dtype)
+pytorch_params = {}
+
+outputs = model.get_tvm(data, pytorch_params)
+params = get_tvm_params(pytorch_params)
+
+inputs = {
+    "data": tvm.nd.array(input.detach().numpy().astype(dtype), ctx)
+}
+
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 # print(func.astext(show_meta_data=False))
 relay.ir_pass.infer_type(func)
 # print(func.astext(show_meta_data=False))
-
-
 
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()
