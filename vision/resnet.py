@@ -279,7 +279,7 @@ else:
         res = sublayer(input)
     model = Bottleneck(sublayer, "layer" + str(args.layer))
 
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 oshape = res.shape
 data = relay.var("data", shape=ishape, dtype=dtype)
 pytorch_params = {}
