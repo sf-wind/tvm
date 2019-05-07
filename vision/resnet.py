@@ -17,7 +17,7 @@ import argparse
 import sys
 import time
 import torch
-from torchvision.models.resnet import resnet152
+from torchvision.models.resnet import resnet152, resnet101, resnet50, resnet34, resnet18
 
 sys.settrace
 
@@ -33,6 +33,8 @@ parser.add_argument("--target", type=str, default="core-avx2",
 parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--layer", type=int, default=-1)
 parser.add_argument("--sublayer", type=int, default=1)
+parser.add_argument("--model", type=str, default="resnet152",
+                    choices=["resnet152", "resnet18", "resnet50", "resnet34", "resnet101"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -58,7 +60,19 @@ WIDTH = 56
 
 dtype = "float32"
 
-pytorch_resnet = resnet152(pretrained=True)
+if args.model == "resnet152":
+    pytorch_resnet = resnet152(pretrained=True)
+elif args.model == "resnet101":
+    pytorch_resnet = resnet101(pretrained=True)
+elif args.model == "resnet50":
+    pytorch_resnet = resnet50(pretrained=True)
+elif args.model == "resnet34":
+    pytorch_resnet = resnet34(pretrained=True)
+elif args.model == "resnet18":
+    pytorch_resnet = resnet18(pretrained=True)
+else:
+    assert False
+
 pytorch_resnet.eval()
 
 # import pdb; pdb.set_trace()
@@ -139,9 +153,8 @@ class Bottleneck():
         self.groups = pbn.conv2.groups
         self.padding = pbn.conv2.padding
         self.dilation = pbn.conv2.dilation
-        self.outplanes = pbn.conv3.out_channels
 
-    def get_tvm(self, input, params):
+    def get_tvm(self, input, params, bottleneck=True):
         # identity = relay.copy(x)
         x = input
         x = conv(x, self.pbn.conv1, self.prefix + "." + "conv1", params)
@@ -149,9 +162,10 @@ class Bottleneck():
         x = relay.nn.relu(x)
         x = conv(x, self.pbn.conv2, self.prefix + "." + "conv2", params)
         x = bn(x, self.pbn.bn2, self.prefix + "." + "bn2", params)
-        x = relay.nn.relu(x)
-        x = conv(x, self.pbn.conv3, self.prefix + "." + "conv3", params)
-        x = bn(x, self.pbn.bn3, self.prefix + "." + "bn3", params)
+        if bottleneck:
+            x = relay.nn.relu(x)
+            x = conv(x, self.pbn.conv3, self.prefix + "." + "conv3", params)
+            x = bn(x, self.pbn.bn3, self.prefix + "." + "bn3", params)
         if self.pbn.downsample:
             input = downsample(input, self.pbn.downsample, self.prefix, params)
         x = relay.add(x, input)
@@ -162,6 +176,7 @@ class Bottleneck():
 class Resnet():
     def __init__(self, pytorch_resnet):
         self.pytorch_resnet = pytorch_resnet
+        self.bottleneck = args.model != "resnet18" and args.model != "resnet34"
 
     def make_layer(self, x, pytorch_layer, prefix, params):
         num = len(pytorch_layer)
@@ -169,7 +184,7 @@ class Resnet():
             pytorch_block = pytorch_layer[i]
             name = prefix + ".block" + str(i)
             block = Bottleneck(pytorch_block, name)
-            x = block.get_tvm(x, params)
+            x = block.get_tvm(x, params, self.bottleneck)
         return x
 
     def get_tvm(self, x, params):
