@@ -141,8 +141,9 @@ class Bottleneck():
         self.dilation = pbn.conv2.dilation
         self.outplanes = pbn.conv3.out_channels
 
-    def get_tvm(self, x, params):
-        identity = relay.copy(x)
+    def get_tvm(self, input, params):
+        # identity = relay.copy(x)
+        x = input
         x = conv(x, self.pbn.conv1, self.prefix + "." + "conv1", params)
         x = bn(x, self.pbn.bn1, self.prefix + "." + "bn1", params)
         x = relay.nn.relu(x)
@@ -152,8 +153,8 @@ class Bottleneck():
         x = conv(x, self.pbn.conv3, self.prefix + "." + "conv3", params)
         x = bn(x, self.pbn.bn3, self.prefix + "." + "bn3", params)
         if self.pbn.downsample:
-            identity = downsample(identity, self.pbn.downsample, self.prefix, params)
-        x = relay.add(x, identity)
+            input = downsample(input, self.pbn.downsample, self.prefix, params)
+        x = relay.add(x, input)
         x = relay.nn.relu(x)
         return x
 
