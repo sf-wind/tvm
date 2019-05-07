@@ -181,7 +181,7 @@ class Resnet():
         x = self.make_layer(x, self.pytorch_resnet.layer3, "layer3", params)
         x = self.make_layer(x, self.pytorch_resnet.layer4, "layer4", params)
         x = relay.nn.global_avg_pool2d(x)
-        x = relay.squeeze(x)
+        x = relay.reshape(x, [-1, self.pytorch_resnet.fc.weight.shape[1]])
         x = fc(x, self.pytorch_resnet.fc, "fc0", params)
         return x
 # import pdb; pdb.set_trace()
@@ -279,7 +279,7 @@ else:
         res = sublayer(input)
     model = Bottleneck(sublayer, "layer" + str(args.layer))
 
-# import pdb; pdb.set_trace()
+import pdb; pdb.set_trace()
 oshape = res.shape
 data = relay.var("data", shape=ishape, dtype=dtype)
 pytorch_params = {}
