@@ -84,23 +84,14 @@ else:
 sublayer = layer[args.sublayer]
 
 ishape = [BATCH, sublayer.conv1.in_channels, HEIGHT, WIDTH]
-ishape = [1, 64, 1, 1]
+# ishape = [1, 64, 1, 1]
 input = torch.randn(ishape)
 
 with torch.no_grad():
-    # res = sublayer(input)
-    '''
-    res = sublayer.conv1(input)
-    res = sublayer.bn1(res)
-    res = sublayer.relu(res)
-    res = sublayer.conv2(res)
-    res = sublayer.bn2(res)
-    res = sublayer.relu(res)
-    '''
-    res = sublayer.conv3(input)
-    # res = sublayer.bn3(res)
+    res = sublayer(input)
+
 oshape = res.shape
-import pdb; pdb.set_trace()
+# import pdb; pdb.set_trace()
 
 class Bottleneck():
     def __init__(self, pbn):
@@ -178,22 +169,19 @@ class Bottleneck():
             return x
 
         identity = relay.copy(x)
-        '''
         x = conv(x, self.pbn.conv1, "conv1")
         x = bn(x, self.pbn.bn1, "bn1")
         x = relay.nn.relu(x)
         x = conv(x, self.pbn.conv2, "conv2")
         x = bn(x, self.pbn.bn2, "bn2")
-        xx = relay.nn.relu(x)
-        '''
-        import pdb; pdb.set_trace()
-        xx = conv(x, self.pbn.conv3, "conv3")
+        x = relay.nn.relu(x)
+        x = conv(x, self.pbn.conv3, "conv3")
         x = bn(x, self.pbn.bn3, "bn3")
         if self.pbn.downsample:
             x = downsample(x, self.pbn.downsample)
         x = relay.add(x, identity)
         x = relay.nn.relu(x)
-        return xx
+        return x
 
 
 
