@@ -51,6 +51,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 np.random.seed(int(time.clock()))
 
+log_filename = "synthesis_autotvm_{}.log".format(args.target)
 context = "llvm -mcpu=" + args.target
 skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
@@ -226,10 +227,8 @@ def tune():
             measure_option = autotvm.measure_option(
                 builder=autotvm.LocalBuilder(),
                 runner=autotvm.LocalRunner(number=10, repeat=3,
-                                           min_repeat_ms=1000,
-                                           n_parallel=args.tuning_threads),
+                                           min_repeat_ms=1000),
             )
-            log_filename = "synthesis_autotvm_skl.log"
             tuner_obj.tune(
                 n_trial=min(n_trial, len(tsk.config_space)),
                 early_stopping=early_stopping,
@@ -320,7 +319,7 @@ if args.tune:
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()
 else:
-    with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
+    with autotvm.apply_history_best(log_filename):
         (graph, lib, new_params) = build_graph()
 
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
