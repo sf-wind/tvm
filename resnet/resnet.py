@@ -35,6 +35,7 @@ parser.add_argument("--layer", type=int, default=-1)
 parser.add_argument("--sublayer", type=int, default=1)
 parser.add_argument("--model", type=str, default="resnet152",
                     choices=["resnet152", "resnet18", "resnet50", "resnet34", "resnet101"])
+parser.add_argument("--tuning_threads", type=int, default=0)
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -224,8 +225,9 @@ def tune():
             early_stopping = 200
             measure_option = autotvm.measure_option(
                 builder=autotvm.LocalBuilder(),
-                runner=autotvm.LocalRunner(number=10, repeat=1,
-                                           min_repeat_ms=1000),
+                runner=autotvm.LocalRunner(number=10, repeat=3,
+                                           min_repeat_ms=1000,
+                                           n_parallel=args.tuning_threads),
             )
             log_filename = "synthesis_autotvm_skl.log"
             tuner_obj.tune(
