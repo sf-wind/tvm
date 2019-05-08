@@ -30,6 +30,8 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
+parser.add_argument("--layout", type=str, default="NCHW",
+                    choices=["NCHW", "NHWC"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -45,6 +47,7 @@ logging.basicConfig(level=logging.DEBUG)
 
 np.random.seed(int(time.clock()))
 
+log_filename = "synthesis_autotvm_{}.log".format(args.target)
 context = "llvm -mcpu=" + args.target
 skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
@@ -52,18 +55,19 @@ ctx = tvm.context(context, 0)
 dtype = "float32"
 
 BATCH = 1
-IN_CHANNEL = 16
-HEIGHT = 224
-WIDTH = 224
+IN_CHANNEL = 64
+HEIGHT = 56
+WIDTH = 56
 
-OUT_CHANNEL = 16
+OUT_CHANNEL = 128
 K_HEIGHT = 3
 K_WIDTH = 3
 
-OUT_HEIGHT = 224
-OUT_WIDTH = 224
+OUT_HEIGHT = 56
+OUT_WIDTH = 56
 
-PADDING = 1
+H_PADDING = (HEIGHT - OUT_HEIGHT + K_HEIGHT - 1) // 2
+W_PADDING = (WIDTH - OUT_WIDTH + K_WIDTH - 1) // 2
 
 ishape = [BATCH, IN_CHANNEL, HEIGHT, WIDTH]
 oshape = [BATCH, OUT_CHANNEL, OUT_HEIGHT, OUT_WIDTH]
@@ -71,16 +75,8 @@ wshape = [OUT_CHANNEL, IN_CHANNEL, K_HEIGHT, K_WIDTH]
 
 a = torch.rand(ishape)
 b = torch.rand(wshape)
-res = torch.nn.functional.conv2d(a, b, padding=1)
+res = torch.nn.functional.conv2d(a, b, padding=(H_PADDING, W_PADDING))
 # import pdb; pdb.set_trace()
-
-params = {
-    "weight": tvm.nd.array(b.detach().numpy().astype(dtype), ctx)
-}
-
-inputs = {
-    "data": tvm.nd.array(a.detach().numpy().astype(dtype), ctx)
-}
 
 
 def tune():
@@ -105,7 +101,6 @@ def tune():
                 runner=autotvm.LocalRunner(number=10, repeat=1,
                                            min_repeat_ms=1000),
             )
-            log_filename = "synthesis_autotvm_skl.log"
             tuner_obj.tune(
                 n_trial=min(n_trial, len(tsk.config_space)),
                 early_stopping=early_stopping,
@@ -140,18 +135,42 @@ def build_graph():
 # import pdb; pdb.set_trace()
 print("conv2d: [{}, {}, {}, {}] x [{}, {}, {}, {}]".format(BATCH, IN_CHANNEL,
       HEIGHT, WIDTH, OUT_CHANNEL, IN_CHANNEL, K_HEIGHT, K_WIDTH))
-data = relay.var("data", shape=ishape, dtype=dtype)
-weight = relay.var("weight", shape=wshape, dtype=dtype)
+
+iishape = ishape
+wwshape = wshape
+ooshape = oshape
+aa = a.detach().numpy().astype(dtype)
+bb = b.detach().numpy().astype(dtype)
+data_layout = args.layout
+kernel_layout = "OIHW"
+if args.layout == "NHWC":
+    iishape = [BATCH, HEIGHT, WIDTH, IN_CHANNEL]
+    wwshape = [K_HEIGHT, K_WIDTH, IN_CHANNEL, OUT_CHANNEL]
+    ooshape = [BATCH, OUT_HEIGHT, OUT_WIDTH, OUT_CHANNEL]
+    aa = np.transpose(aa, (0, 2, 3, 1))
+    bb = np.transpose(bb, (2, 3, 1, 0))
+    kernel_layout = "HWIO"
+
+data = relay.var("data", shape=iishape, dtype=dtype)
+weight = relay.var("weight", shape=wwshape, dtype=dtype)
 # import pdb; pdb.set_trace()
 # zero = relay.var("zero", shape=(M, N), dtype=dtype)
-outputs = relay.nn.conv2d(data, weight, data_layout="NCHW", kernel_layout="OIHW",
-                          channels=OUT_CHANNEL, padding=(PADDING, PADDING), strides=(1,1),
+outputs = relay.nn.conv2d(data, weight, data_layout=data_layout, kernel_layout=kernel_layout,
+                          channels=OUT_CHANNEL, padding=(H_PADDING, W_PADDING), strides=(1,1),
                           dilation=(1,1), groups=1, kernel_size=(K_HEIGHT,K_WIDTH))
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
 # print(func.astext(show_meta_data=False))
 relay.ir_pass.infer_type(func)
 # print(func.astext(show_meta_data=False))
+
+params = {
+    "weight": tvm.nd.array(bb, ctx)
+}
+
+inputs = {
+    "data": tvm.nd.array(aa, ctx)
+}
 
 if args.tune:
     tune()
@@ -161,7 +180,7 @@ if args.tune:
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()
 else:
-    with autotvm.apply_history_best("synthesis_autotvm_skl.log"):
+    with autotvm.apply_history_best(log_filename):
         (graph, lib, new_params) = build_graph()
 
 r_new_params = {k: tvm.nd.array(v, ctx) for k, v in new_params.items()}
@@ -170,9 +189,13 @@ module = graph_runtime.create(graph, lib, ctx)
 module.set_input(**r_new_params)
 module.set_input(**r_inputs)
 module.run()
-ro = tvm.nd.empty(oshape)
+ro = tvm.nd.empty(ooshape)
 module.get_output(0, ro)
-tvm.testing.assert_allclose(ro.asnumpy(), res, rtol=1e-5)
+roo = ro.asnumpy()
+# import pdb; pdb.set_trace()
+if args.layout == "NHWC":
+    roo = np.transpose(roo, (0, 3, 1, 2))
+tvm.testing.assert_allclose(roo, res, rtol=1e-5, atol=1e-5)
 
 ftimer = module.module.time_evaluator("run", ctx, 1000)
 for i in range(5):
