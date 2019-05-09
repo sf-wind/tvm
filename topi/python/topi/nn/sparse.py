@@ -245,14 +245,14 @@ def sdense_default(data, weight_data, weight_indices, weight_indptr):
         NB = NB_plus_1 - 1
         oshape = (M, NB * BS_R)
         assert weight_indices.dtype in ["int32", "uint16"], weight_indices.dtype
-        assert weight_indptr.dtype == "int32", weight_indptr.dtype
+        assert weight_indptr.dtype in ["int32", "uint16"], weight_indptr.dtype
         assert K % BS_C == 0
         X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
         # bs_r = tvm.reduce_axis((0, weight_data.shape[1]), name="bs_r")
         bs_c = tvm.reduce_axis((0, BS_C), name="bs_c")
         def f(i, nb, r):
-            row_start = weight_indptr[nb]
-            row_end = weight_indptr[nb + 1]
+            row_start = weight_indptr[nb].astype("int32")
+            row_end = weight_indptr[nb + 1].astype("int32")
             row_elems = row_end - row_start
             elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
             elem = row_start + elem_idx
