@@ -121,7 +121,7 @@ def bn(x, pbn_bn, name, params):
     running_mean = relay.var(name + ".running_mean",
                              shape=pbn_bn.running_mean.shape)
     c = relay.nn.batch_norm(x, weight, bias, running_mean, running_var,
-                            epsilon=pbn_bn.eps, axis=3)
+                            epsilon=pbn_bn.eps, axis=bias_axis)
     params[name + ".weight"] = pbn_bn.weight
     params[name + ".bias"] = pbn_bn.bias
     params[name + ".running_var"] = pbn_bn.running_var
