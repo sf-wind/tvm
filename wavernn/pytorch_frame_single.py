@@ -767,7 +767,7 @@ def test(target):
     (graph, lib, params) = build_fast_wavernn_module(target, profile=True, **args1)
 
 def skylake():
-    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype=args.wdtype, witype="uint16", sdense=args.sdense, profile=True)
+    (graph, lib, params) = build_fast_wavernn_module("llvm -mcpu=skylake-avx512 -target=x86_64-linux-gnu", wdtype=args.wdtype, witype="uint16", sdense=args.sdense, profile=True, tune=args.tune)
     with open(
             "skl_fast_wavernn_rnn_dims_{rnn_dims}_fc_dims_{fc_dims}_feat_dims_{feat_dims}_aux_dims_{aux_dims}_graph.json".format(**globals()),
             "w") as f:
@@ -861,6 +861,8 @@ def test_load():
         np.testing.assert_allclose(outs_ref, outs_new, rtol=1e-4, atol=1e-4)
         np.testing.assert_allclose(h1_ref, h1_new, rtol=1e-4, atol=1e-4)
 
+if args.tune:
+    skylake()
 # test_relay_frame_fast()
 # test_relay_cpp_frame()
 if args.verify:
