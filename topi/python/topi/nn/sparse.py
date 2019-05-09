@@ -244,7 +244,7 @@ def sdense_default(data, weight_data, weight_indices, weight_indptr):
         (NB_plus_1, ) = topi.util.get_const_tuple(weight_indptr.shape)
         NB = NB_plus_1 - 1
         oshape = (M, NB * BS_R)
-        assert weight_indices.dtype == "int32", weight_indices.dtype
+        assert weight_indices.dtype in ["int32", "uint16"], weight_indices.dtype
         assert weight_indptr.dtype == "int32", weight_indptr.dtype
         assert K % BS_C == 0
         X = tvm.compute((M, K // BS_C, BS_C), lambda m, ko, ki: data[m, ko * BS_C + ki])
