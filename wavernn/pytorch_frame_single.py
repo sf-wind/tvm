@@ -20,7 +20,7 @@ parser.add_argument("--tune", action="store_true")
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--verify", action="store_true")
 parser.add_argument("--align_entries", type=int, default=1)
-parser.add_argument("--merged_gru", type=str, default="interleaving",
+parser.add_argument("--merged_gru", type=str, default="simple",
                     choices=["simple", "interleaving"])
 parser.add_argument("--num_threads", type=int, default=0)
 parser.add_argument("--m", type=int, default=0)
@@ -31,11 +31,11 @@ parser.add_argument("--tuner", type=str, default="xgboost",
 parser.add_argument("--target", type=str, default="core-avx2",
                     choices=["core-avx2", "skylake-avx512"])
 parser.add_argument("--default_schedule", action="store_true")
-parser.add_argument("--wdtype", type=str, default="uint16",
+parser.add_argument("--wdtype", type=str, default="float32",
                     choices=["float32", "uint16", "int8", "compare"])
-parser.add_argument("--witype", type=str, default="int32",
+parser.add_argument("--witype", type=str, default="uint16",
                     choices=["int32", "uint16", "compare"])
-parser.add_argument("--sdense", type=str, default="False",
+parser.add_argument("--sdense", type=str, default="True",
                     choices=["False", "True", "compare"])
 parser.add_argument("--graph", type=str)
 parser.add_argument("--lib", type=str)
