@@ -257,7 +257,7 @@ def sdense_default(data, weight_data, weight_indices, weight_indptr):
             elem_idx = tvm.reduce_axis((0, row_elems), name="elem_idx")
             elem = row_start + elem_idx
             a_val = weight_data[elem, r, bs_c].astype("float32")
-            weight_val = X[i, weight_indices[elem], bs_c]
+            weight_val = X[i, weight_indices[elem].astype("int32"), bs_c]
             return tvm.sum(a_val * weight_val, axis=[elem_idx, bs_c])
         Y = tvm.compute((M, NB, BS_R), f,
             name="sparse_dense_kmnk_block",
