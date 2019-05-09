@@ -501,7 +501,7 @@ def build_fast_wavernn_module(target="llvm", wdtype="uint16", witype="int32", sd
             func = relay.optimize(func, target=TARGET, params=params)
             # print(func.astext(show_meta_data=False))
             tasks = autotvm.task.extract_from_program(
-                func, target=TARGET, params=params, ops=(relay.op.nn.dense,))
+                func, target=TARGET, params=params, ops=(relay.op.nn.dense,relay.op.nn.sdense))
             for i, tsk in enumerate(tasks):
                 # print(tsk)
                 prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
