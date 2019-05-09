@@ -234,13 +234,16 @@ def schedule_sdense_sch(s, cfg, op, out):
             raxes = [io] + raxes
         s[Y].reorder(*raxes)
         if cfg["vectorize_axis"].val >= 0 and \
-                new_axis[cfg["vectorize_axis"].val] != elem_idx:
+                new_axis[cfg["vectorize_axis"].val] != elem_idx and \
+                new_axis[cfg["vectorize_axis"].val] != bs_c:
             s[Y].vectorize(new_axis[cfg["vectorize_axis"].val])
         if cfg["parallel_axis"].val >= 0 and \
-                new_axis[cfg["parallel_axis"].val] != elem_idx:
+                new_axis[cfg["parallel_axis"].val] != elem_idx and \
+                new_axis[cfg["vectorize_axis"].val] != bs_c:
             s[Y].parallel(new_axis[cfg["parallel_axis"].val])
         if cfg["unroll_axis"].val >= 0 and \
-                new_axis[cfg["unroll_axis"].val] != elem_idx:
+                new_axis[cfg["unroll_axis"].val] != elem_idx and \
+                new_axis[cfg["vectorize_axis"].val] != bs_c:
             s[Y].unroll(new_axis[cfg["unroll_axis"].val])
 
     if op != out:
