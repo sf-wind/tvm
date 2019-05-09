@@ -36,6 +36,8 @@ parser.add_argument("--sublayer", type=int, default=1)
 parser.add_argument("--model", type=str, default="resnet152",
                     choices=["resnet152", "resnet18", "resnet50", "resnet34", "resnet101"])
 parser.add_argument("--tuning_threads", type=int, default=0)
+parser.add_argument("--layout", type=str, default="NCHW",
+                    choices=["NCHW", "NHWC"])
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -56,6 +58,13 @@ context = "llvm -mcpu=" + args.target
 skl_target = tvm.target.create(context)
 ctx = tvm.context(context, 0)
 
+isNHWC = args.layout == "NHWC"
+data_layout = args.layout
+kernel_layout = "OIHW"
+bias_axis = 1
+if isNHWC:
+    kernel_layout = "HWIO"
+    bias_axis = 3
 BATCH = 1
 HEIGHT = 56
 WIDTH = 56
@@ -81,19 +90,25 @@ pytorch_resnet.eval()
 
 
 def conv(x, pbn_conv, name, params):
-    weight = relay.var(name + ".weight", shape=pbn_conv.weight.shape)
+    # import pdb; pdb.set_trace()
+    wshape = pbn_conv.weight.shape
+    data_layout = args.layout
+    if isNHWC:
+        wshape = [wshape[2], wshape[3], wshape[1], wshape[0]]
+    weight = relay.var(name + ".weight", shape=wshape)
     c = relay.nn.conv2d(x, weight,
-                        data_layout="NCHW", kernel_layout="OIHW",
+                        data_layout=data_layout, kernel_layout=kernel_layout,
                         channels=pbn_conv.weight.shape[0],
                         padding=pbn_conv.padding,
                         strides=pbn_conv.stride,
                         dilation=pbn_conv.dilation,
                         groups=pbn_conv.groups,
                         kernel_size=pbn_conv.kernel_size)
-    params[name + ".weight"] = pbn_conv.weight
+    params[name + ".weight"] = np.transpose(pbn_conv.weight.detach().numpy(),
+                                            (2, 3, 1, 0)) if isNHWC else pbn_conv.weight
     if pbn_conv.bias is not None:
         bias = relay.var(name + ".bias", shape=pbn_conv.bias.shape)
-        c = relay.nn.bias_add(c, bias)
+        c = relay.nn.bias_add(c, bias, axis=bias_axis)
         params[name + ".bias"] = pbn_conv.bias
     return c
 
@@ -106,7 +121,7 @@ def bn(x, pbn_bn, name, params):
     running_mean = relay.var(name + ".running_mean",
                              shape=pbn_bn.running_mean.shape)
     c = relay.nn.batch_norm(x, weight, bias, running_mean, running_var,
-                            epsilon=pbn_bn.eps)
+                            epsilon=pbn_bn.eps, axis=3)
     params[name + ".weight"] = pbn_bn.weight
     params[name + ".bias"] = pbn_bn.bias
     params[name + ".running_var"] = pbn_bn.running_var
@@ -124,6 +139,7 @@ def maxpool(x, pool):
     c = relay.nn.max_pool2d(x, pool_size=(pool.kernel_size, pool.kernel_size),
                             strides=(pool.stride, pool.stride),
                             padding=(pool.padding, pool.padding),
+                            layout=args.layout,
                             ceil_mode=pool.ceil_mode)
     return c
 
@@ -140,7 +156,7 @@ def fc(x, linear, name, params):
 
 
 def get_tvm_params(params):
-    tvm_params = { k : tvm.nd.array(v.detach().numpy(), ctx)
+    tvm_params = { k : v if isinstance(v, np.ndarray) else tvm.nd.array(v.detach().numpy(), ctx)
                   for k,v in params.items() if v is not None}
     return tvm_params
 
@@ -199,7 +215,7 @@ class Resnet():
         x = self.make_layer(x, self.pytorch_resnet.layer2, "layer2", params)
         x = self.make_layer(x, self.pytorch_resnet.layer3, "layer3", params)
         x = self.make_layer(x, self.pytorch_resnet.layer4, "layer4", params)
-        x = relay.nn.global_avg_pool2d(x)
+        x = relay.nn.global_avg_pool2d(x, layout=args.layout)
         x = relay.reshape(x, [-1, self.pytorch_resnet.fc.weight.shape[1]])
         x = fc(x, self.pytorch_resnet.fc, "fc0", params)
         return x
@@ -270,7 +286,7 @@ if args.layer < 0:
     with torch.no_grad():
         res = pytorch_resnet(input)
     model = Resnet(pytorch_resnet)
-
+    oshape = res.shape
 else:
     if args.layer == 1:
         layer = pytorch_resnet.layer1
@@ -292,9 +308,14 @@ else:
     with torch.no_grad():
         res = sublayer(input)
     model = Bottleneck(sublayer, "layer" + str(args.layer))
-
+    oshape = res.shape
+    if isNHWC:
+        oshape = [oshape[0], oshape[2], oshape[3], oshape[1]]
 # import pdb; pdb.set_trace()
-oshape = res.shape
+
+if isNHWC:
+    ishape = [ishape[0], ishape[2], ishape[3], ishape[1]]
+
 data = relay.var("data", shape=ishape, dtype=dtype)
 pytorch_params = {}
 
@@ -302,7 +323,8 @@ outputs = model.get_tvm(data, pytorch_params)
 params = get_tvm_params(pytorch_params)
 
 inputs = {
-    "data": tvm.nd.array(input.detach().numpy().astype(dtype), ctx)
+    "data": tvm.nd.array((np.transpose(input.detach().numpy(), (0, 2, 3, 1))
+                          if isNHWC else input.detach().numpy()).astype(dtype), ctx)
 }
 
 
@@ -316,6 +338,7 @@ if args.tune:
     import sys
     sys.exit()
 
+# import pdb; pdb.set_trace()
 if args.default_schedule:
     (graph, lib, new_params) = build_graph()
 else:
@@ -331,7 +354,10 @@ module.run()
 ro = tvm.nd.empty(oshape)
 module.get_output(0, ro)
 # import pdb; pdb.set_trace()
-tvm.testing.assert_allclose(ro.asnumpy(), res, rtol=1e-5, atol=1e-5)
+ro = ro.asnumpy()
+if isNHWC and len(ro.shape) > 2:
+    ro = np.transpose(ro, (0, 3, 1, 2))
+tvm.testing.assert_allclose(ro, res, rtol=1e-5, atol=1e-5)
 
 ftimer = module.module.time_evaluator("run", ctx, 100)
 for i in range(5):
