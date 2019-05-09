@@ -63,11 +63,13 @@ OUT_CHANNEL = 64
 K_HEIGHT = 1
 K_WIDTH = 1
 
-OUT_HEIGHT = 56
-OUT_WIDTH = 56
+STRIDE = 2
 
-H_PADDING = (HEIGHT - OUT_HEIGHT + K_HEIGHT - 1) // 2
-W_PADDING = (WIDTH - OUT_WIDTH + K_WIDTH - 1) // 2
+H_PADDING = 0
+W_PADDING = 0
+
+OUT_HEIGHT = (HEIGHT + K_HEIGHT - 1 + H_PADDING) // STRIDE
+OUT_WIDTH = (WIDTH + K_WIDTH - 1 + H_PADDING) // STRIDE
 
 ishape = [BATCH, IN_CHANNEL, HEIGHT, WIDTH]
 oshape = [BATCH, OUT_CHANNEL, OUT_HEIGHT, OUT_WIDTH]
@@ -75,7 +77,8 @@ wshape = [OUT_CHANNEL, IN_CHANNEL, K_HEIGHT, K_WIDTH]
 
 a = torch.rand(ishape)
 b = torch.rand(wshape)
-res = torch.nn.functional.conv2d(a, b, padding=(H_PADDING, W_PADDING))
+res = torch.nn.functional.conv2d(a, b, padding=(H_PADDING, W_PADDING),
+                                 stride=STRIDE)
 # import pdb; pdb.set_trace()
 
 
@@ -156,7 +159,7 @@ weight = relay.var("weight", shape=wwshape, dtype=dtype)
 # import pdb; pdb.set_trace()
 # zero = relay.var("zero", shape=(M, N), dtype=dtype)
 outputs = relay.nn.conv2d(data, weight, data_layout=data_layout, kernel_layout=kernel_layout,
-                          channels=OUT_CHANNEL, padding=(H_PADDING, W_PADDING), strides=(1,1),
+                          channels=OUT_CHANNEL, padding=(H_PADDING, W_PADDING), strides=(STRIDE, STRIDE),
                           dilation=(1,1), groups=1, kernel_size=(K_HEIGHT,K_WIDTH))
 
 func = relay.Function(relay.ir_pass.free_vars(outputs), outputs)
