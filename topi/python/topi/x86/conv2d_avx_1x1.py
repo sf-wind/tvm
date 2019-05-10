@@ -27,12 +27,23 @@ from .check_targets import check_skylake
 from .util import get_fp32_len
 
 def _fallback_schedule(cfg, wkl):
+    # import pdb; pdb.set_trace()
     simd_width = get_fp32_len()
     HPAD, WPAD = wkl.hpad, wkl.wpad
     HSTR, WSTR = wkl.hstride, wkl.wstride
     out_height = (wkl.height + 2 * HPAD - wkl.hkernel) // HSTR + 1
     out_width = (wkl.width + 2 * WPAD - wkl.wkernel) // WSTR + 1
 
+    if wkl.in_dtype == "float32" and wkl.out_dtype == "float32" and \
+            wkl.height == 56 and wkl.width == 56 and wkl.in_filter == 64 and \
+            wkl.out_filter == 128 and wkl.hkernel == 1 and wkl.wkernel == 1 and \
+            wkl.hpad == 0 and wkl.wpad == 0 and wkl.hstride == 2 and \
+            wkl.wstride == 2:
+        cfg["tile_ic"] = SplitEntity([4, 16])
+        cfg["tile_oc"] = SplitEntity([2, 64])
+        cfg["tile_oh"] = OtherOptionEntity(1)
+        cfg["tile_ow"] = SplitEntity([2, 14])
+        return
     oc_bn = 1
     for bn in range(simd_width, 0, -1):
         if wkl.out_filter % bn == 0:
@@ -66,7 +77,7 @@ def _schedule_conv(s, cfg, data, data_pad, data_vec, kernel_vec, conv_out, outpu
     padding = infer_pad(data, data_pad)
     HPAD, WPAD = padding
     DOPAD = (HPAD != 0 or WPAD != 0)
-
+    # import pdb; pdb.set_trace()
     A, W = data, kernel_vec
     A0, A1 = data_pad, data_vec
     # schedule data
@@ -125,6 +136,7 @@ def _schedule_conv(s, cfg, data, data_pad, data_vec, kernel_vec, conv_out, outpu
 
 
 def _schedule_conv_NCHWc(s, cfg, data, conv_out, last):
+    # import pdb; pdb.set_trace()
     # fetch schedule
     oh_factor, ow_factor = cfg["tile_oh"].val, cfg["tile_ow"].size[-1]
     _, _, _, _, ic_bn = get_const_tuple(data.shape)

@@ -95,6 +95,7 @@ def _create_tuning_space(cfg, data, kernel, strides, padding, dilation, layout):
 
 @autotvm.register_topi_compute(conv2d, 'cpu', 'direct')
 def _declaration_conv(cfg, data, kernel, strides, padding, dilation, layout, out_dtype):
+    # import pdb; pdb.set_trace()
     out_dtype = data.dtype if out_dtype is None else out_dtype
     padding = padding if isinstance(padding, (tuple, list)) else (padding, padding)
     strides = strides if isinstance(strides, (tuple, list)) else (strides, strides)
@@ -184,6 +185,7 @@ def _declaration_conv_impl(cfg, data, kernel, strides, padding, dilation, layout
 
 @autotvm.register_topi_schedule(generic.schedule_conv2d_nchw, 'cpu', ['direct'])
 def schedule_conv2d(cfg, outs):
+    # import pdb; pdb.set_trace()
     """Create schedule for tensors"""
     s = tvm.create_schedule([x.op for x in outs])
     scheduled_ops = []
@@ -213,6 +215,7 @@ def schedule_conv2d(cfg, outs):
                 data = data_pad.op.input_tensors[0]
 
             _, _, kh, kw = get_const_tuple(kernel.shape)
+            # import pdb; pdb.set_trace()
             is_kernel_1x1 = kh == 1 and kw == 1
             args = [s, cfg, data, data_pad, data_vec, kernel_vec, conv_out, output, outs[0]]
             if is_kernel_1x1:
@@ -315,7 +318,7 @@ def _topi_nn_conv2d_NCHWc(*args, **kwargs):
                         raw_kernel_shape[2], raw_kernel_shape[3], ic_bn, oc_bn)
     new_data = tvm.placeholder(new_data_shape, data.dtype)
     new_kernel = tvm.placeholder(new_kernel_shape, kernel.dtype)
-
+    # import pdb; pdb.set_trace()
     C = _declaration_conv_NCHWc(cfg, new_data, new_kernel, strides, padding, dilation,
                                 data_layout, out_layout, dtype)
     s = _schedule_conv2d_NCHWc(cfg, [C])
@@ -502,6 +505,7 @@ def _schedule_conv2d_NCHWc(cfg, outs):
     scheduled_ops = []
 
     def traverse(op):
+        # import pdb; pdb.set_trace()
         """Traverse operators from computation graph"""
         # inline all one-to-one-mapping operators except the last stage (output)
         if tag.is_broadcast(op.tag):
