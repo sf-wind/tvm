@@ -238,10 +238,11 @@ def tune():
                 tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
             else:
                 tuner_obj = autotvm.tuner.GATuner(tsk, pop_size=50)
-            n_trial = 100
+            n_trial = 4000
             early_stopping = 200
+            n_parallel = None if args.tuning_threads == 0 else args.tuning_threads
             measure_option = autotvm.measure_option(
-                builder=autotvm.LocalBuilder(timeout=100),
+                builder=autotvm.LocalBuilder(timeout=100, n_parallel=n_parallel),
                 runner=autotvm.LocalRunner(number=10, repeat=3,
                                            min_repeat_ms=1000),
             )

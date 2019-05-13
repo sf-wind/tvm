@@ -32,6 +32,7 @@ parser.add_argument("--target", type=str, default="core-avx2",
 parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--layout", type=str, default="NCHW",
                     choices=["NCHW", "NHWC"])
+parser.add_argument("--tuning_threads", type=int, default=0)
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -98,10 +99,11 @@ def tune():
                 tuner_obj = autotvm.tuner.XGBTuner(tsk, loss_type='rank', feature_type="knob")
             else:
                 tuner_obj = autotvm.tuner.GATuner(tsk, pop_size=50)
-            n_trial = 100
+            n_trial = 4000
             early_stopping = 200
+            n_parallel = None if args.tuning_threads == 0 else args.tuning_threads
             measure_option = autotvm.measure_option(
-                builder=autotvm.LocalBuilder(timeout=100),
+                builder=autotvm.LocalBuilder(timeout=100, n_parallel=n_parallel),
                 runner=autotvm.LocalRunner(number=10, repeat=1,
                                            min_repeat_ms=1000),
             )
