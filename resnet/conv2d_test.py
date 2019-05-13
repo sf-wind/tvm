@@ -89,7 +89,8 @@ def tune():
         print(func.astext(show_meta_data=False))
         # import pdb; pdb.set_trace()
         tasks = autotvm.task.extract_from_program(
-            func, target=skl_target, params=params, ops=(relay.op.nn.sdense,))
+            func, target=skl_target, params=params, ops=(relay.op.nn.dense,
+                                                         relay.op.nn.conv2d))
         for i, tsk in enumerate(tasks):
             print(tsk)
             prefix = "[Task %2d/%2d] " % (i + 1, len(tasks))
