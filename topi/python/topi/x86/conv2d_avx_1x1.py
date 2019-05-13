@@ -40,9 +40,9 @@ def _fallback_schedule(cfg, wkl):
             wkl.hpad == 0 and wkl.wpad == 0 and wkl.hstride == 2 and \
             wkl.wstride == 2:
         cfg["tile_ic"] = SplitEntity([4, 16])
-        cfg["tile_oc"] = SplitEntity([2, 64])
+        cfg["tile_oc"] = SplitEntity([8, 16])
         cfg["tile_oh"] = OtherOptionEntity(1)
-        cfg["tile_ow"] = SplitEntity([2, 14])
+        cfg["tile_ow"] = SplitEntity([7, 4])
         return
     oc_bn = 1
     for bn in range(simd_width, 0, -1):
