@@ -241,7 +241,7 @@ def tune():
             n_trial = 100
             early_stopping = 200
             measure_option = autotvm.measure_option(
-                builder=autotvm.LocalBuilder(),
+                builder=autotvm.LocalBuilder(timeout=100),
                 runner=autotvm.LocalRunner(number=10, repeat=3,
                                            min_repeat_ms=1000),
             )
