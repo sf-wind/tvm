@@ -31,6 +31,18 @@ def _fallback_schedule(cfg, wkl):
     HPAD, WPAD = wkl.hpad, wkl.wpad
     HSTR, WSTR = wkl.hstride, wkl.wstride
     out_width = (wkl.width + 2 * WPAD - wkl.wkernel) // WSTR + 1
+    if wkl.in_dtype == "float32" and wkl.out_dtype == "float32" and \
+            wkl.height == 7 and wkl.width == 7 and \
+            wkl.in_filter == 512 and wkl.out_filter == 512 and \
+            wkl.hkernel == 3 and wkl.wkernel == 3 and \
+            wkl.hpad == 1 and wkl.wpad == 1 and \
+            wkl.hstride == 1 and wkl.wstride == 1:
+        cfg["tile_ic"] = SplitEntity([512, 1])
+        cfg["tile_oc"] = SplitEntity([64, 8])
+        cfg["tile_ow"] = SplitEntity([1, 7])
+        cfg["unroll_kw"] = OtherOptionEntity(True)
+        cfg["vectorize_input"] = OtherOptionEntity(False)
+        return
 
     oc_bn = 1
     for bn in range(simd_width, 0, -1):
@@ -54,6 +66,7 @@ def _fallback_schedule(cfg, wkl):
     cfg["tile_oc"] = SplitEntity([wkl.out_filter // oc_bn, oc_bn])
     cfg["tile_ow"] = SplitEntity([out_width // reg_n, reg_n])
     cfg["unroll_kw"] = OtherOptionEntity(False)
+    cfg["vectorize_input"] = OtherOptionEntity(False)
 
 
 def _schedule_conv(s, cfg, data, data_pad, data_vec, kernel_vec, conv_out, output, last):
@@ -130,7 +143,9 @@ def _schedule_conv(s, cfg, data, data_pad, data_vec, kernel_vec, conv_out, outpu
 def _schedule_conv_NCHWc(s, cfg, data, conv_out, last):
     # fetch schedule
     reg_n, unroll_kw = cfg["tile_ow"].size[-1], cfg["unroll_kw"].val
-    _, _, _, _, ic_bn = get_const_tuple(data.shape)
+    ic_tr, ic_bn = cfg["tile_ic"].size
+    # _, _, _, _, ic_bn = get_const_tuple(data.shape)
+    vectorize_input = cfg["vectorize_input"].val if "vectorize_input" in cfg else False
 
     # schedule data
     A = data
@@ -141,34 +156,61 @@ def _schedule_conv_NCHWc(s, cfg, data, conv_out, last):
 
     # schedule 5-D NCHW[x]c conv
     C, O = conv_out, last
-    CC = s.cache_write(C, 'global')
 
     _, oc_chunk, oh, ow, oc_block = s[C].op.axis
-    ow_chunk, ow_block = s[C].split(ow, factor=reg_n)
-    s[C].reorder(oc_chunk, oh, ow_chunk, ow_block, oc_block)
-    parallel_axis = s[C].fuse(oc_chunk, oh)
-    s[C].vectorize(oc_block)
-    if C == O:
-        s[C].parallel(parallel_axis)
 
-    s[CC].compute_at(s[C], ow_chunk)
-    _, oc_chunk, oh, ow, oc_block = s[CC].op.axis
-    if len(s[CC].op.reduce_axis) == 4:
-        ic_chunk, ic_block, kh, kw = s[CC].op.reduce_axis
+    # import pdb; pdb.set_trace()
+    if vectorize_input:
+        '''
+        ow_chunk, ow_block = s[C].split(ow, factor=reg_n)
+        s[C].reorder(oc_chunk, oh, ow_chunk, ow_block, oc_block)
+        parallel_axis = s[C].fuse(oc_chunk, oh)
+        if C == O:
+            s[C].parallel(parallel_axis)
+        '''
+        ic, kh, kw = s[C].op.reduce_axis
+        ic_chunk, ic_block = s[C].split(ic, factor=ic_bn)
+        s[C].reorder(ic_chunk, kh, kw, ic_block)
+        # fuse_k = s[C].fuse(kh, kw)
+        # fuse_input = s[C].fuse(fuse_k, ic)
+        # import pdb; pdb.set_trace()
+        BF = s.rfactor(C, ic_block, factor_axis=5)
+        n_c, oc_chunk_c, oh_c, ow_c, oc_block_c, ic_i = s[BF].op.axis
+        # ic_o, ic_i = s[BF].split(ic, factor=32)
+        kh, kw, ic_o = s[BF].op.reduce_axis
+        s[BF].reorder(ic_o, kh, kw, ic_i)
+        s[BF].vectorize(ic_i)
+        # s[BF].unroll(kw)
+        # fuse_oc, fuse_ic = s[BF].split(fuse_c, factor=ic_bn)
+        # s[BF].reorder(n_c, oc_chunk_c, oh_c, ow_c, oc_block_c, fuse_oc, fuse_ic)
+        n, oc_chunk, oh, ow, oc_block = s[C].op.axis
+        s[BF].compute_at(s[C], oc_block)
     else:
-        ic, kh, kw = s[CC].op.reduce_axis
-        ic_chunk, ic_block = s[CC].split(ic, factor=ic_bn)
+        CC = s.cache_write(C, 'global')
+        ow_chunk, ow_block = s[C].split(ow, factor=reg_n)
+        s[C].reorder(oc_chunk, oh, ow_chunk, ow_block, oc_block)
+        parallel_axis = s[C].fuse(oc_chunk, oh)
+        if C == O:
+            s[C].parallel(parallel_axis)
+        s[C].vectorize(oc_block)
+        s[CC].compute_at(s[C], ow_chunk)
+        _, oc_chunk, oh, ow, oc_block = s[CC].op.axis
+        if len(s[CC].op.reduce_axis) == 4:
+            ic_chunk, ic_block, kh, kw = s[CC].op.reduce_axis
+        else:
+            ic, kh, kw = s[CC].op.reduce_axis
+            ic_chunk, ic_block = s[CC].split(ic, factor=ic_bn)
 
-    ow_chunk, ow_block = s[CC].split(ow, factor=reg_n)
+        ow_chunk, ow_block = s[CC].split(ow, factor=reg_n)
+        if unroll_kw:
+            s[CC].reorder(oc_chunk, oh, ow_chunk, ic_chunk, kh, ic_block, kw, ow_block, oc_block)
+            s[CC].unroll(kw)
+            # s[CC].unroll(kh)
+        else:
+            s[CC].reorder(oc_chunk, oh, ow_chunk, ic_chunk, kh, kw, ic_block, ow_block, oc_block)
 
-    if unroll_kw:
-        s[CC].reorder(oc_chunk, oh, ow_chunk, ic_chunk, kh, ic_block, kw, ow_block, oc_block)
-        s[CC].unroll(kw)
-    else:
-        s[CC].reorder(oc_chunk, oh, ow_chunk, ic_chunk, kh, kw, ic_block, ow_block, oc_block)
-
-    s[CC].vectorize(oc_block)
-    s[CC].unroll(ow_block)
+        s[CC].vectorize(oc_block)
+        s[CC].unroll(ow_block)
 
     if C != O:
         batch, oc_chunk, oh, ow, oc_block = s[O].op.axis

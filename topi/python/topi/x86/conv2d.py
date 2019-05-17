@@ -91,6 +91,7 @@ def _create_tuning_space(cfg, data, kernel, strides, padding, dilation, layout):
         cfg.define_knob("tile_oh", [1, 2] if oh > 1 else [1])
     else:
         cfg.define_knob("unroll_kw", [True, False])
+        cfg.define_knob("vectorize_input", [True, False])
 
 
 @autotvm.register_topi_compute(conv2d, 'cpu', 'direct')
@@ -373,10 +374,15 @@ def _alter_conv2d_layout(attrs, inputs, tinfo, F):
     if cfg.is_fallback:
         _get_default_config(cfg, data, kernel, strides, padding, out_dtype, is_depthwise)
 
-    ic_bn, oc_bn = cfg["tile_ic"].size[-1], cfg["tile_oc"].size[-1]
-
-    new_attrs[layout_name] = 'NCHW%dc' % ic_bn
-    new_attrs['out_layout'] = 'NCHW%dc' % oc_bn
+    oc_bn = cfg["tile_oc"].size[-1]
+    ic_trunk, ic_bn = cfg["tile_ic"].size
+    vectorize_input = cfg["vectorize_input"] if "vectorize_input" in cfg else False
+    if vectorize_input:
+        new_attrs[layout_name] = 'NCHW%dc' % (ic_bn)
+        new_attrs['out_layout'] = 'NCHW%dc' % oc_bn
+    else:
+        new_attrs[layout_name] = 'NCHW%dc' % ic_bn
+        new_attrs['out_layout'] = 'NCHW%dc' % oc_bn
 
     new_data = tvm.placeholder((batch_size, in_channel//ic_bn, height, width, ic_bn),
                                dtype=data.dtype)

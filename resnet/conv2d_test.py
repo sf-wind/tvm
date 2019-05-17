@@ -33,6 +33,7 @@ parser.add_argument("--default_schedule", action="store_true")
 parser.add_argument("--layout", type=str, default="NCHW",
                     choices=["NCHW", "NHWC"])
 parser.add_argument("--tuning_threads", type=int, default=0)
+parser.add_argument("--conv", type=int, default=0)
 args = parser.parse_args()
 
 if args.num_threads > 0:
@@ -56,19 +57,30 @@ ctx = tvm.context(context, 0)
 dtype = "float32"
 
 BATCH = 1
-IN_CHANNEL = 64
-HEIGHT = 56
-WIDTH = 56
+if args.conv == 0:
+    IN_CHANNEL = 64
+    HEIGHT = 56
+    WIDTH = 56
+    OUT_CHANNEL = 128
 
-OUT_CHANNEL = 128
-K_HEIGHT = 1
-K_WIDTH = 1
+    K_HEIGHT = 1
+    K_WIDTH = 1
+    STRIDE = 2
+    H_PADDING = 0
+    W_PADDING = 0
+elif args.conv == 1:
+    IN_CHANNEL = 512
+    HEIGHT = 7
+    WIDTH = 7
+    OUT_CHANNEL = 512
 
-STRIDE = 2
-
-H_PADDING = 0
-W_PADDING = 0
-
+    K_HEIGHT = 3
+    K_WIDTH = 3
+    STRIDE = 1
+    H_PADDING = 1
+    W_PADDING = 1
+else:
+    assert False
 OUT_HEIGHT = (HEIGHT - K_HEIGHT + 2 * H_PADDING) // STRIDE + 1
 OUT_WIDTH = (WIDTH - K_WIDTH + 2 * H_PADDING) // STRIDE + 1
 
@@ -127,7 +139,7 @@ def build_graph():
         graph, lib, new_params = relay.build_module.build(
             func, target=skl_target,  params=params)
         # print(func.astext(show_meta_data=False))
-        # print(lib.get_source('asm'))
+        print(lib.get_source('asm'))
         # print(lib.get_source())
         '''
         print(lib.get_source('asm'))
@@ -201,8 +213,7 @@ roo = ro.asnumpy()
 # import pdb; pdb.set_trace()
 if args.layout == "NHWC":
     roo = np.transpose(roo, (0, 3, 1, 2))
-tvm.testing.assert_allclose(roo, res, rtol=1e-5, atol=1e-5)
-
+# tvm.testing.assert_allclose(roo, res, rtol=1e-5, atol=1e-5)
 ftimer = module.module.time_evaluator("run", ctx, 1000)
 for i in range(5):
     prof_res = ftimer()
